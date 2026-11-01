@@ -271,6 +271,14 @@ class MainActivity : Activity() {
                 findings.add(1 to "مسار الرابط يحتوي كلمات مرتبطة بتسجيل الدخول أو الحساب (${matched.joinToString(", ")}). وجودها وحده لا يعني الاحتيال.")
             }
 
+            // Check hostname labels separately; words split by hyphens are also detected.
+            val hostWords = host.split(Regex("[^a-z]+"))
+                .filter { it.isNotBlank() && it in baitWords }
+                .distinct()
+            if (hostWords.isNotEmpty()) {
+                findings.add(1 to "اسم النطاق يحتوي كلمات مرتبطة بتسجيل الدخول أو الحساب (${hostWords.joinToString(", ")}). تحقق من العنوان قبل المتابعة.")
+            }
+
             val filePath = (parsed.rawPath ?: "").lowercase(Locale.ROOT)
             val riskyExtensions = setOf(".apk", ".exe", ".msi", ".bat", ".cmd", ".scr", ".js")
             if (riskyExtensions.any { filePath.endsWith(it) }) {
