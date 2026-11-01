@@ -15,6 +15,7 @@ import android.widget.TextView
 import android.graphics.Color
 import android.graphics.Typeface
 import java.net.URI
+import java.net.URLDecoder
 import java.util.Locale
 
 class MainActivity : Activity() {
@@ -243,9 +244,17 @@ class MainActivity : Activity() {
                 findings.add(1 to "اسم النطاق يحتوي شرطات غير معتادة؛ تحقق من تهجئته.")
             }
 
+            // Decode query parameter names before checking redirect indicators.
+            // This catches simple percent-encoded spellings such as %72edirect.
             val queryKeys = (parsed.rawQuery ?: "").substringBefore("#")
                 .split("&")
-                .mapNotNull { part -> part.substringBefore("=").lowercase(Locale.ROOT).takeIf { it.isNotBlank() } }
+                .mapNotNull { part ->
+                    val encodedKey = part.substringBefore("=")
+                    val decodedKey = runCatching {
+                        URLDecoder.decode(encodedKey, "UTF-8")
+                    }.getOrDefault(encodedKey)
+                    decodedKey.lowercase(Locale.ROOT).takeIf { it.isNotBlank() }
+                }
             val redirectKeys = setOf("redirect", "redirect_url", "return", "returnurl", "next", "continue", "destination", "dest", "target", "url")
             if (queryKeys.any { it in redirectKeys }) {
                 findings.add(1 to "الرابط يحتوي معامل تحويل إلى وجهة أخرى؛ تأكد من الموقع الذي سيُفتح قبل المتابعة.")
