@@ -106,11 +106,24 @@ jobs:
         if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEY_PASSWORD != '' }}
         env:
           ANDROID_KEYSTORE_PATH: app/release-key.jks
+        shell: bash
         run: |
           set -euo pipefail
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          python3 - <<'PY'
+          import base64, os, re
+          value = os.environ["ANDROID_KEYSTORE_BASE64"]
+          value = re.sub(r"[^A-Za-z0-9+/=]", "", value)
+          value = value.rstrip("=")
+          value += "=" * (-len(value) % 4)
+          data = base64.b64decode(value, validate=True)
+          if not data:
+              raise SystemExit("Decoded signing keystore is empty")
+          with open(os.environ["ANDROID_KEYSTORE_PATH"], "wb") as f:
+              f.write(data)
+          PY
           chmod 600 "$ANDROID_KEYSTORE_PATH"
-          test -s "$ANDROID_KEYSTORE_PATH"
+          keytool -list -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null
+          echo "Signing keystore decoded and validated."
 
       - name: Build signed release APK
         if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEY_PASSWORD != '' }}
