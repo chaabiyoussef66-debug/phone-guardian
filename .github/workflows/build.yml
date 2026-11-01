@@ -105,7 +105,7 @@ jobs:
       - name: Restore private signing key
         if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEY_PASSWORD != '' }}
         env:
-          ANDROID_KEYSTORE_PATH: app/release-key.jks
+          ANDROID_KEYSTORE_PATH: release-key.jks
         shell: bash
         run: |
           set -euo pipefail
@@ -128,7 +128,7 @@ jobs:
       - name: Build signed release APK
         if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEY_PASSWORD != '' }}
         env:
-          ANDROID_KEYSTORE_PATH: app/release-key.jks
+          ANDROID_KEYSTORE_PATH: ../release-key.jks
         run: gradle --no-daemon assembleRelease
 
       - name: Verify signed release APK
