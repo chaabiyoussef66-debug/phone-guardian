@@ -126,6 +126,20 @@ class MainActivity : Activity() {
         actionButton("رجوع") { showHome() }
     }
 
+    private fun isPrivateOrLocalIpv4(host: String): Boolean {
+        val parts = host.split(".").mapNotNull { it.toIntOrNull() }
+        if (parts.size != 4 || parts.any { it !in 0..255 }) return false
+        val a = parts[0]
+        val b = parts[1]
+        return a == 10 ||
+            (a == 172 && b in 16..31) ||
+            (a == 192 && b == 168) ||
+            a == 127 ||
+            (a == 169 && b == 254) ||
+            (a == 100 && b in 64..127) ||
+            a == 0
+    }
+
     private fun showLinkCheck() {
         content = baseLayout()
         content.addView(title("فحص رابط متقدم"))
@@ -156,12 +170,16 @@ class MainActivity : Activity() {
             } else {
                 val host = parsed.host.lowercase(Locale.ROOT).trimEnd('.')
                 val scheme = parsed.scheme?.lowercase(Locale.ROOT) ?: ""
-                if (scheme != "https") findings.add(2 to "الرابط لا يستخدم HTTPS.")
+                if (scheme != "https") findings.add(2 to "الرابط لا يستخدم HTTPS؛ الاتصال غير مشفر، فتجنب إدخال كلمات المرور أو البيانات الحساسة.")
                 if (host.startsWith("xn--") || host.split(".").any { it.startsWith("xn--") }) {
                     findings.add(2 to "اسم النطاق يحتوي على ترميز دولي قد يُستخدم لتقليد أسماء مواقع.")
                 }
                 if (host.matches(Regex("""(?:\d{1,3}\.){3}\d{1,3}"""))) {
-                    findings.add(2 to "الرابط يستخدم عنوان IP مباشرة بدل اسم نطاق معروف.")
+                    if (isPrivateOrLocalIpv4(host)) {
+                        findings.add(0 to "العنوان IP محلي أو خاص؛ يُستخدم كثيراً في الراوترات والشبكات الداخلية، ولا يعني وحده وجود خطر.")
+                    } else {
+                        findings.add(2 to "الرابط يستخدم عنوان IP عاماً مباشرة بدل اسم نطاق؛ هذه علامة تستحق التحقق وليست دليلاً قاطعاً على الخطر.")
+                    }
                 }
                 if (host.count { it == '.' } >= 4) findings.add(1 to "اسم النطاق يحتوي على مستويات فرعية كثيرة.")
                 val shorteners = setOf("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "rb.gy", "rebrand.ly")
@@ -173,7 +191,7 @@ class MainActivity : Activity() {
                 val pathAndQuery = ((parsed.rawPath ?: "") + " " + (parsed.rawQuery ?: "")).lowercase(Locale.ROOT)
                 val baitWords = listOf("login", "verify", "verification", "account", "password", "secure", "update", "gift", "prize", "free", "wallet", "bank")
                 val matched = baitWords.filter { word -> Regex("(^|[^a-z])" + Regex.escape(word) + "([^a-z]|$)").containsMatchIn(pathAndQuery) }
-                if (matched.isNotEmpty()) findings.add(1 to "يحتوي مسار الرابط على كلمات شائعة في صفحات تسجيل الدخول أو الإغراء: ${matched.joinToString(", ")}.")
+                if (matched.isNotEmpty()) findings.add(1 to "يحتوي مسار الرابط على كلمات مثل ${matched.joinToString(", ")}؛ وجودها وحده لا يعني أن الموقع احتيالي.")
                 if (host.split(".").any { it.length > 25 }) findings.add(1 to "جزء من اسم النطاق طويل بشكل غير معتاد.")
             }
 
