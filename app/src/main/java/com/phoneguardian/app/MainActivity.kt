@@ -241,7 +241,7 @@ class MainActivity : Activity() {
                 Regex("(^|[^a-z])" + Regex.escape(word) + "([^a-z]|$)").containsMatchIn(pathAndQuery)
             }
             if (matched.isNotEmpty()) {
-                findings.add(1 to "مسار الرابط يحتوي كلمات مرتبطة بتسجيل الدخول أو الحساب (\${matched.joinToString(", ")}). وجودها وحده لا يعني الاحتيال.")
+                findings.add(1 to "مسار الرابط يحتوي كلمات مرتبطة بتسجيل الدخول أو الحساب (${matched.joinToString(", ")}). وجودها وحده لا يعني الاحتيال.")
             }
 
             val filePath = (parsed.rawPath ?: "").lowercase(Locale.ROOT)
@@ -260,7 +260,7 @@ class MainActivity : Activity() {
             val details = if (findings.isEmpty()) {
                 "لم نعثر على مؤشرات التحذير التي يبحث عنها هذا الفاحص. هذا لا يثبت أن الموقع آمن."
             } else {
-                findings.joinToString("\n") { "• \${it.second}" }
+                findings.joinToString("\n") { "• ${it.second}" }
             }
             val advice = when {
                 score >= 5 -> "النصيحة: لا تفتح الرابط ولا تدخل أي معلومات قبل التأكد من المرسل والموقع الرسمي."
