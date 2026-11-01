@@ -224,6 +224,33 @@ class MainActivity : Activity() {
             val shorteners = setOf("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "rb.gy", "rebrand.ly", "lnkd.in")
             if (host in shorteners) findings.add(2 to "هذا رابط مختصر يخفي الوجهة النهائية؛ لا تفتحه إذا لم تكن تثق بالمرسل.")
 
+            // Local heuristics: brand-like subdomains and redirect parameters.
+            val protectedBrandWords = setOf(
+                "paypal", "google", "apple", "microsoft", "facebook",
+                "instagram", "whatsapp", "amazon", "netflix", "bankofamerica"
+            )
+            val hostLabels = host.split(".")
+            val mainHostLabel = if (hostLabels.size >= 2) hostLabels[hostLabels.size - 2] else host
+            val impersonatedBrands = protectedBrandWords.filter { brand ->
+                hostLabels.dropLast(2).contains(brand) ||
+                    (hostLabels.size >= 3 && hostLabels.dropLast(1).any { it == brand } && mainHostLabel != brand)
+            }
+            if (impersonatedBrands.isNotEmpty()) {
+                findings.add(3 to "اسم علامة معروفة يظهر داخل نطاق فرعي وليس في اسم النطاق الأساسي (${impersonatedBrands.joinToString(", ")}). تحقق من العنوان الكامل.")
+            }
+
+            if (host.contains("--") || host.startsWith("-") || host.endsWith("-")) {
+                findings.add(1 to "اسم النطاق يحتوي شرطات غير معتادة؛ تحقق من تهجئته.")
+            }
+
+            val queryKeys = (parsed.rawQuery ?: "").substringBefore("#")
+                .split("&")
+                .mapNotNull { part -> part.substringBefore("=").lowercase(Locale.ROOT).takeIf { it.isNotBlank() } }
+            val redirectKeys = setOf("redirect", "redirect_url", "return", "returnurl", "next", "continue", "destination", "dest", "target", "url")
+            if (queryKeys.any { it in redirectKeys }) {
+                findings.add(1 to "الرابط يحتوي معامل تحويل إلى وجهة أخرى؛ تأكد من الموقع الذي سيُفتح قبل المتابعة.")
+            }
+
             val suspiciousTlds = setOf("zip", "mov", "top", "click", "work", "country", "gq", "tk")
             if (host.substringAfterLast('.', "") in suspiciousTlds) {
                 findings.add(1 to "امتداد النطاق يستحق تحققاً إضافياً؛ الامتداد وحده لا يثبت أن الموقع ضار.")
