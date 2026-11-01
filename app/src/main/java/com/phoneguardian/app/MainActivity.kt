@@ -160,7 +160,7 @@ class MainActivity : Activity() {
                 if (host.startsWith("xn--") || host.split(".").any { it.startsWith("xn--") }) {
                     findings.add(2 to "اسم النطاق يحتوي على ترميز دولي قد يُستخدم لتقليد أسماء مواقع.")
                 }
-                if (host.matches(Regex("""(?:\\d{1,3}\\.){3}\\d{1,3}"""))) {
+                if (host.matches(Regex("""(?:\d{1,3}\.){3}\d{1,3}"""))) {
                     findings.add(2 to "الرابط يستخدم عنوان IP مباشرة بدل اسم نطاق معروف.")
                 }
                 if (host.count { it == '.' } >= 4) findings.add(1 to "اسم النطاق يحتوي على مستويات فرعية كثيرة.")
