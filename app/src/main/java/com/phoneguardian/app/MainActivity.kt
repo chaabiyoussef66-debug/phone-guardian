@@ -126,24 +126,32 @@ class MainActivity : Activity() {
         actionButton("رجوع") { showHome() }
     }
 
+    private fun ipv4Parts(host: String): List<Int>? {
+        val parts = host.split(".")
+        if (parts.size != 4) return null
+        val numbers = parts.map { it.toIntOrNull() ?: return null }
+        if (numbers.any { it !in 0..255 }) return null
+        return numbers
+    }
+
     private fun isPrivateOrLocalIpv4(host: String): Boolean {
-        val parts = host.split(".").mapNotNull { it.toIntOrNull() }
-        if (parts.size != 4 || parts.any { it !in 0..255 }) return false
+        val parts = ipv4Parts(host) ?: return false
         val a = parts[0]
         val b = parts[1]
-        return a == 10 ||
-            (a == 172 && b in 16..31) ||
-            (a == 192 && b == 168) ||
-            a == 127 ||
-            (a == 169 && b == 254) ||
-            (a == 100 && b in 64..127) ||
-            a == 0
+        return a == 10 || (a == 172 && b in 16..31) ||
+            (a == 192 && b == 168) || a == 127 ||
+            (a == 169 && b == 254) || (a == 100 && b in 64..127) || a == 0
     }
+
+    private fun isLocalHostname(host: String): Boolean =
+        host == "localhost" || host.endsWith(".localhost") ||
+            host.endsWith(".local") || host.endsWith(".lan") ||
+            host == "router" || host == "gateway"
 
     private fun showLinkCheck() {
         content = baseLayout()
         content.addView(title("فحص رابط متقدم"))
-        content.addView(paragraph("أدخل الرابط كاملاً. سنفحص مؤشرات مشبوهة على الهاتف فقط، ولن نفتح الرابط أو نتصل به."))
+        content.addView(paragraph("يفحص هذا الإصدار مؤشرات محلية فقط. لا يفتح الرابط ولا يرسل بياناتك إلى الإنترنت."))
         val input = EditText(this).apply {
             hint = "https://example.com"
             textSize = 16f
@@ -152,6 +160,7 @@ class MainActivity : Activity() {
         content.addView(input)
         val result = paragraph("")
         content.addView(result)
+
         actionButton("افحص الرابط") {
             val raw = input.text.toString().trim()
             val findings = mutableListOf<Pair<Int, String>>()
@@ -159,40 +168,86 @@ class MainActivity : Activity() {
                 result.text = "أدخل رابطاً أولاً."
                 return@actionButton
             }
+            if (raw.any { it.isWhitespace() || it.isISOControl() }) {
+                result.text = "صيغة الرابط غير صحيحة: احذف الفراغات أو الرموز غير المرئية ثم أعد المحاولة."
+                return@actionButton
+            }
 
-            val normalized = if (raw.contains("://")) raw else "https://$raw"
+            val explicitScheme = Regex("^[A-Za-z][A-Za-z0-9+.-]*:").find(raw)?.value
+            val normalized = when {
+                explicitScheme == null -> "https://$raw"
+                raw.contains("://") -> raw
+                else -> {
+                    result.text = "نوع الرابط غير مدعوم. استخدم رابطاً يبدأ بـ http:// أو https://."
+                    return@actionButton
+                }
+            }
             val parsed = try { URI(normalized) } catch (_: Exception) { null }
-
-            if (raw.length > 180) findings.add(1 to "الرابط طويل بشكل غير معتاد.")
-            if (raw.contains("@")) findings.add(3 to "يحتوي الرابط على @؛ قد تُستخدم لإخفاء اسم الموقع الحقيقي.")
             if (parsed == null || parsed.host.isNullOrBlank()) {
-                findings.add(3 to "تعذّر قراءة اسم النطاق. تحقق من صيغة الرابط.")
-            } else {
-                val host = parsed.host.lowercase(Locale.ROOT).trimEnd('.')
-                val scheme = parsed.scheme?.lowercase(Locale.ROOT) ?: ""
-                if (scheme != "https") findings.add(2 to "الرابط لا يستخدم HTTPS؛ الاتصال غير مشفر، فتجنب إدخال كلمات المرور أو البيانات الحساسة.")
-                if (host.startsWith("xn--") || host.split(".").any { it.startsWith("xn--") }) {
-                    findings.add(2 to "اسم النطاق يحتوي على ترميز دولي قد يُستخدم لتقليد أسماء مواقع.")
+                result.text = "تعذّر قراءة الرابط. تأكد من كتابة اسم الموقع بشكل صحيح، مثل https://example.com"
+                return@actionButton
+            }
+
+            val host = parsed.host.lowercase(Locale.ROOT).trimEnd('.')
+            val scheme = parsed.scheme?.lowercase(Locale.ROOT) ?: ""
+            val authority = parsed.rawAuthority ?: ""
+            val userInfo = parsed.rawUserInfo
+            if (raw.length > 180) findings.add(1 to "الرابط طويل بشكل غير معتاد؛ تحقق من مصدره.")
+            if (!userInfo.isNullOrBlank() || authority.substringBeforeLast('@', "").isNotEmpty()) {
+                findings.add(4 to "يحتوي جزء العنوان على بيانات قبل علامة @؛ قد تُستعمل لخداعك بشأن الموقع الحقيقي.")
+            }
+            if (scheme == "http") {
+                findings.add(2 to "الاتصال يستخدم HTTP غير المشفر. لا تدخل كلمات المرور أو البيانات الحساسة.")
+            } else if (scheme != "https") {
+                findings.add(3 to "نوع الاتصال غير معتاد لهذا الفاحص؛ لا تتابع إلا إذا كنت تعرف سبب استخدامه.")
+            }
+
+            if (host.startsWith("xn--") || host.split(".").any { it.startsWith("xn--") }) {
+                findings.add(2 to "اسم النطاق يستخدم ترميز IDN؛ افحص تهجئة الموقع بعناية لاحتمال تشابه الحروف.")
+            }
+            if (isLocalHostname(host)) {
+                findings.add(0 to "اسم محلي أو داخلي؛ يُستخدم عادة داخل الشبكة ولا يعني وحده وجود خطر.")
+            }
+
+            val ipv4 = ipv4Parts(host)
+            if (ipv4 != null) {
+                if (isPrivateOrLocalIpv4(host)) {
+                    findings.add(0 to "عنوان IP محلي أو خاص؛ شائع في الراوترات والشبكات الداخلية، ولا يعني وحده وجود خطر.")
+                } else {
+                    findings.add(2 to "الرابط يستخدم عنوان IPv4 عاماً مباشرة بدل اسم نطاق؛ هذه علامة تستحق التحقق وليست دليلاً قاطعاً.")
                 }
-                if (host.matches(Regex("""(?:\d{1,3}\.){3}\d{1,3}"""))) {
-                    if (isPrivateOrLocalIpv4(host)) {
-                        findings.add(0 to "العنوان IP محلي أو خاص؛ يُستخدم كثيراً في الراوترات والشبكات الداخلية، ولا يعني وحده وجود خطر.")
-                    } else {
-                        findings.add(2 to "الرابط يستخدم عنوان IP عاماً مباشرة بدل اسم نطاق؛ هذه علامة تستحق التحقق وليست دليلاً قاطعاً على الخطر.")
-                    }
-                }
-                if (host.count { it == '.' } >= 4) findings.add(1 to "اسم النطاق يحتوي على مستويات فرعية كثيرة.")
-                val shorteners = setOf("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "rb.gy", "rebrand.ly")
-                if (host in shorteners) findings.add(2 to "هذا رابط مختصر يخفي الوجهة النهائية.")
-                val suspiciousTlds = setOf("zip", "mov", "top", "click", "work", "country", "gq", "tk")
-                if (host.substringAfterLast('.', "") in suspiciousTlds) {
-                    findings.add(1 to "امتداد النطاق يستحق التحقق الإضافي؛ الامتداد وحده لا يثبت الخطر.")
-                }
-                val pathAndQuery = ((parsed.rawPath ?: "") + " " + (parsed.rawQuery ?: "")).lowercase(Locale.ROOT)
-                val baitWords = listOf("login", "verify", "verification", "account", "password", "secure", "update", "gift", "prize", "free", "wallet", "bank")
-                val matched = baitWords.filter { word -> Regex("(^|[^a-z])" + Regex.escape(word) + "([^a-z]|$)").containsMatchIn(pathAndQuery) }
-                if (matched.isNotEmpty()) findings.add(1 to "يحتوي مسار الرابط على كلمات مثل ${matched.joinToString(", ")}؛ وجودها وحده لا يعني أن الموقع احتيالي.")
-                if (host.split(".").any { it.length > 25 }) findings.add(1 to "جزء من اسم النطاق طويل بشكل غير معتاد.")
+            } else if (host.matches(Regex("""[0-9.]+"""))) {
+                findings.add(3 to "صيغة عنوان IP تبدو غير صحيحة أو غير مألوفة.")
+            }
+
+            if (host.count { it == '.' } >= 4) findings.add(1 to "اسم النطاق يحتوي على مستويات فرعية كثيرة؛ تحقق من اسم الموقع الأساسي.")
+            val shorteners = setOf("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "rb.gy", "rebrand.ly", "lnkd.in")
+            if (host in shorteners) findings.add(2 to "هذا رابط مختصر يخفي الوجهة النهائية؛ لا تفتحه إذا لم تكن تثق بالمرسل.")
+
+            val suspiciousTlds = setOf("zip", "mov", "top", "click", "work", "country", "gq", "tk")
+            if (host.substringAfterLast('.', "") in suspiciousTlds) {
+                findings.add(1 to "امتداد النطاق يستحق تحققاً إضافياً؛ الامتداد وحده لا يثبت أن الموقع ضار.")
+            }
+            if (host.split(".").any { it.length > 25 }) findings.add(1 to "جزء من اسم النطاق طويل بشكل غير معتاد.")
+
+            val port = parsed.port
+            if (port != -1 && port !in setOf(80, 443)) {
+                findings.add(1 to "الرابط يستخدم منفذاً غير افتراضي ($port)؛ قد يكون طبيعياً، لكن تحقق من الجهة.")
+            }
+
+            val pathAndQuery = ((parsed.rawPath ?: "") + " " + (parsed.rawQuery ?: "")).lowercase(Locale.ROOT)
+            val baitWords = listOf("login", "verify", "verification", "account", "password", "secure", "update", "gift", "prize", "free", "wallet", "bank", "signin", "confirm")
+            val matched = baitWords.filter { word ->
+                Regex("(^|[^a-z])" + Regex.escape(word) + "([^a-z]|$)").containsMatchIn(pathAndQuery)
+            }
+            if (matched.isNotEmpty()) {
+                findings.add(1 to "مسار الرابط يحتوي كلمات مرتبطة بتسجيل الدخول أو الحساب (\${matched.joinToString(", ")}). وجودها وحده لا يعني الاحتيال.")
+            }
+
+            val filePath = (parsed.rawPath ?: "").lowercase(Locale.ROOT)
+            val riskyExtensions = setOf(".apk", ".exe", ".msi", ".bat", ".cmd", ".scr", ".js")
+            if (riskyExtensions.any { filePath.endsWith(it) }) {
+                findings.add(2 to "الرابط يبدو أنه يشير إلى ملف قابل للتنفيذ؛ لا تحمّله إلا من مصدر رسمي موثوق.")
             }
 
             val score = findings.sumOf { it.first }.coerceAtMost(10)
@@ -203,11 +258,16 @@ class MainActivity : Activity() {
                 else -> "لم تظهر مؤشرات واضحة"
             }
             val details = if (findings.isEmpty()) {
-                "لم نعثر على مؤشرات التحذير التي يبحث عنها هذا الفاحص."
+                "لم نعثر على مؤشرات التحذير التي يبحث عنها هذا الفاحص. هذا لا يثبت أن الموقع آمن."
             } else {
-                findings.joinToString("\n") { "• ${it.second}" }
+                findings.joinToString("\n") { "• \${it.second}" }
             }
-            result.text = "مستوى التنبيه: $level ($score/10)\n\n$details\n\nتنبيه: هذا تقييم مبدئي محلي، وليس حكماً قاطعاً. قد تكون الروابط الخطيرة بلا هذه العلامات، وقد تظهر علامات على روابط سليمة. لا تدخل كلمة المرور أو معلوماتك البنكية في رابط غير موثوق."
+            val advice = when {
+                score >= 5 -> "النصيحة: لا تفتح الرابط ولا تدخل أي معلومات قبل التأكد من المرسل والموقع الرسمي."
+                score >= 2 -> "النصيحة: تحقق من اسم النطاق والمرسل، ولا تدخل بيانات حساسة."
+                else -> "النصيحة: تأكد دائماً من عنوان الموقع والمرسل قبل إدخال أي معلومات."
+            }
+            result.text = "مستوى التنبيه: $level ($score/10)\n\n$details\n\n$advice\n\nملاحظة: هذا تقييم تقريبي يعتمد على شكل الرابط فقط؛ لا يفحص محتوى الموقع ولا يضمن اكتشاف كل عمليات التصيد."
         }
         actionButton("رجوع") { showHome() }
     }
