@@ -4,3 +4,7 @@ Release APKs are built and signed through GitHub Actions using repository signin
 
 
 Release signing verification run.
+
+
+## v1.11
+- Improved parsing of internationalized (Unicode) domain names in the local link checker.
