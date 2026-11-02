@@ -149,28 +149,52 @@ class MainActivity : Activity() {
             host.endsWith(".local") || host.endsWith(".lan") ||
             host == "router" || host == "gateway"
 
-    // Returns true when two labels differ by at most one insertion, deletion, or substitution.
-    private fun differsByAtMostOneChar(a: String, b: String): Boolean {
+    // Match one insertion, deletion, substitution, or adjacent transposition.
+    private fun isOneTypoAway(a: String, b: String): Boolean {
         if (kotlin.math.abs(a.length - b.length) > 1) return false
+        if (a.length == b.length) {
+            val mismatches = a.indices.filter { a[it] != b[it] }
+            return mismatches.isEmpty() || mismatches.size == 1 ||
+                (mismatches.size == 2 && mismatches[1] == mismatches[0] + 1 &&
+                    a[mismatches[0]] == b[mismatches[1]] &&
+                    a[mismatches[1]] == b[mismatches[0]])
+        }
+        val shorter = if (a.length < b.length) a else b
+        val longer = if (a.length < b.length) b else a
         var i = 0
         var j = 0
-        var edits = 0
-        while (i < a.length && j < b.length) {
-            if (a[i] == b[j]) {
+        var skipped = false
+        while (i < shorter.length && j < longer.length) {
+            if (shorter[i] == longer[j]) {
                 i++
                 j++
             } else {
-                edits++
-                if (edits > 1) return false
-                when {
-                    a.length > b.length -> i++
-                    b.length > a.length -> j++
-                    else -> { i++; j++ }
-                }
+                if (skipped) return false
+                skipped = true
+                j++
             }
         }
-        if (i < a.length || j < b.length) edits++
-        return edits <= 1
+        return true
+    }
+
+    // Use the label immediately before common multi-part public suffixes.
+    // This avoids comparing "co" in domains such as example.co.uk.
+    private fun registrableDomainLabel(host: String): String {
+        val labels = host.split(".")
+        if (labels.size < 2) return host
+        val multiPartSuffixes = setOf(
+            "co.uk", "org.uk", "ac.uk", "gov.uk",
+            "com.au", "net.au", "org.au",
+            "co.nz", "org.nz",
+            "co.jp", "ne.jp",
+            "com.br", "com.mx", "com.tr", "com.cn",
+            "com.sg", "com.my", "com.hk", "com.tw",
+            "co.in", "firm.in", "net.in", "org.in",
+            "co.za", "co.kr", "com.ar"
+        )
+        val lastTwo = labels.takeLast(2).joinToString(".")
+        val index = if (lastTwo in multiPartSuffixes) labels.size - 3 else labels.size - 2
+        return labels.getOrElse(index) { host }
     }
 
     private fun isPrivateOrLocalIpv6(host: String): Boolean {
@@ -268,7 +292,7 @@ class MainActivity : Activity() {
                 "instagram", "whatsapp", "amazon", "netflix", "bankofamerica"
             )
             val hostLabels = host.split(".")
-            val mainHostLabel = if (hostLabels.size >= 2) hostLabels[hostLabels.size - 2] else host
+            val mainHostLabel = registrableDomainLabel(host)
             val impersonatedBrands = protectedBrandWords.filter { brand ->
                 hostLabels.dropLast(2).contains(brand) ||
                     (hostLabels.size >= 3 && hostLabels.dropLast(1).any { it == brand } && mainHostLabel != brand)
@@ -279,7 +303,7 @@ class MainActivity : Activity() {
 
             val lookalikeBrands = protectedBrandWords.filter { brand ->
                 mainHostLabel != brand && mainHostLabel.length >= 4 &&
-                    differsByAtMostOneChar(mainHostLabel, brand)
+                    isOneTypoAway(mainHostLabel, brand)
             }
             if (lookalikeBrands.isNotEmpty()) {
                 findings.add(3 to "اسم النطاق يشبه في الكتابة علامة معروفة (${lookalikeBrands.joinToString(", ")}) مع اختلاف حرف تقريباً؛ تحقق من العنوان الرسمي.")
