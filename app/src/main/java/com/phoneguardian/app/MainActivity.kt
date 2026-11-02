@@ -149,6 +149,36 @@ class MainActivity : Activity() {
             host.endsWith(".local") || host.endsWith(".lan") ||
             host == "router" || host == "gateway"
 
+    // Returns true when two labels differ by at most one insertion, deletion, or substitution.
+    private fun differsByAtMostOneChar(a: String, b: String): Boolean {
+        if (kotlin.math.abs(a.length - b.length) > 1) return false
+        var i = 0
+        var j = 0
+        var edits = 0
+        while (i < a.length && j < b.length) {
+            if (a[i] == b[j]) {
+                i++
+                j++
+            } else {
+                edits++
+                if (edits > 1) return false
+                when {
+                    a.length > b.length -> i++
+                    b.length > a.length -> j++
+                    else -> { i++; j++ }
+                }
+            }
+        }
+        if (i < a.length || j < b.length) edits++
+        return edits <= 1
+    }
+
+    private fun isPrivateOrLocalIpv6(host: String): Boolean {
+        val value = host.removePrefix("[").removeSuffix("]").lowercase(Locale.ROOT)
+        return value == "::1" || value == "::" || value.startsWith("fc") ||
+            value.startsWith("fd") || value.startsWith("fe80:")
+    }
+
     private fun showLinkCheck() {
         content = baseLayout()
         content.addView(title("فحص رابط متقدم"))
@@ -217,8 +247,15 @@ class MainActivity : Activity() {
                 } else {
                     findings.add(2 to "الرابط يستخدم عنوان IPv4 عاماً مباشرة بدل اسم نطاق؛ هذه علامة تستحق التحقق وليست دليلاً قاطعاً.")
                 }
-            } else if (host.matches(Regex("""[0-9.]+"""))) {
-                findings.add(3 to "صيغة عنوان IP تبدو غير صحيحة أو غير مألوفة.")
+            } else if (host.contains(":")) {
+                if (isPrivateOrLocalIpv6(host)) {
+                    findings.add(0 to "عنوان IPv6 محلي أو خاص؛ قد يكون طبيعياً داخل الشبكة ولا يعني وحده وجود خطر.")
+                } else {
+                    findings.add(2 to "الرابط يستخدم عنوان IPv6 مباشرة بدل اسم نطاق؛ تحقق من مصدره.")
+                }
+            } else if (host.matches(Regex("""[0-9.]+""")) ||
+                host.startsWith("0x") || host.matches(Regex("""(?i)(0x[0-9a-f]+\\.)*[0-9]+"""))) {
+                findings.add(3 to "صيغة عنوان IP رقمية غير مألوفة؛ قد تُستخدم لإخفاء الوجهة الحقيقية.")
             }
 
             if (host.count { it == '.' } >= 4) findings.add(1 to "اسم النطاق يحتوي على مستويات فرعية كثيرة؛ تحقق من اسم الموقع الأساسي.")
@@ -238,6 +275,14 @@ class MainActivity : Activity() {
             }
             if (impersonatedBrands.isNotEmpty()) {
                 findings.add(3 to "اسم علامة معروفة يظهر داخل نطاق فرعي وليس في اسم النطاق الأساسي (${impersonatedBrands.joinToString(", ")}). تحقق من العنوان الكامل.")
+            }
+
+            val lookalikeBrands = protectedBrandWords.filter { brand ->
+                mainHostLabel != brand && mainHostLabel.length >= 4 &&
+                    differsByAtMostOneChar(mainHostLabel, brand)
+            }
+            if (lookalikeBrands.isNotEmpty()) {
+                findings.add(3 to "اسم النطاق يشبه في الكتابة علامة معروفة (${lookalikeBrands.joinToString(", ")}) مع اختلاف حرف تقريباً؛ تحقق من العنوان الرسمي.")
             }
 
             if (host.contains("--") || host.startsWith("-") || host.endsWith("-")) {
