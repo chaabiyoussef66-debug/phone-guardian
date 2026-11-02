@@ -2,6 +2,8 @@ package com.phoneguardian.app
 
 import android.app.Activity
 import android.content.Intent
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -12,6 +14,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import android.graphics.Color
 import android.graphics.Typeface
 import java.net.URI
@@ -422,6 +425,16 @@ class MainActivity : Activity() {
                 else -> "النصيحة: تأكد دائماً من عنوان الموقع والمرسل قبل إدخال أي معلومات."
             }
             result.text = "مستوى التنبيه: $level ($score/10)\n\n$details\n\n$advice\n\nملاحظة: هذا تقييم تقريبي يعتمد على شكل الرابط فقط؛ لا يفحص محتوى الموقع ولا يضمن اكتشاف كل عمليات التصيد."
+        }
+        actionButton("📋 نسخ تقرير الفحص") {
+            val report = result.text.toString()
+            if (!report.startsWith("مستوى التنبيه:")) {
+                Toast.makeText(this, "افحص رابطاً أولاً حتى تتمكن من نسخ التقرير.", Toast.LENGTH_SHORT).show()
+            } else {
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Phone Guardian - تقرير الفحص", report))
+                Toast.makeText(this, "تم نسخ تقرير الفحص.", Toast.LENGTH_SHORT).show()
+            }
         }
         actionButton("رجوع") { showHome() }
     }
