@@ -254,7 +254,7 @@ class MainActivity : Activity() {
                     findings.add(2 to "الرابط يستخدم عنوان IPv6 مباشرة بدل اسم نطاق؛ تحقق من مصدره.")
                 }
             } else if (host.matches(Regex("""[0-9.]+""")) ||
-                host.startsWith("0x") || host.matches(Regex("""(?i)(0x[0-9a-f]+\\.)*[0-9]+"""))) {
+                host.startsWith("0x") || host.contains(".0x")) {
                 findings.add(3 to "صيغة عنوان IP رقمية غير مألوفة؛ قد تُستخدم لإخفاء الوجهة الحقيقية.")
             }
 
