@@ -8,3 +8,6 @@ Release signing verification run.
 
 ## v1.11
 - Improved parsing of internationalized (Unicode) domain names in the local link checker.
+
+## v1.12
+- Added an Arabic button to copy the complete local link scan report to the clipboard.
