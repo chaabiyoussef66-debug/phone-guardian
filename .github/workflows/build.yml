@@ -2,7 +2,7 @@ name: Build Phone Guardian APK
 
 on:
   push:
-    branches: [ "main", "v1.8-development", "v1.9-development" ]
+    branches: [ "main", "v1.8-development", "v1.9-development", "v1.10-development" ]
   workflow_dispatch:
 
 permissions:
@@ -147,7 +147,7 @@ jobs:
         if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEY_PASSWORD != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: phone-guardian-v1.9-release-signed
+          name: phone-guardian-v1.10-release-signed
           path: |
             app/build/outputs/apk/release/app-release.apk
             app/build/outputs/apk/release/SHA256SUMS.txt
