@@ -1,6 +1,7 @@
 package com.phoneguardian.app
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -20,6 +21,10 @@ import android.graphics.Typeface
 import java.net.URI
 import java.net.URLDecoder
 import java.util.Locale
+import java.text.SimpleDateFormat
+import java.util.Date
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : Activity() {
     private lateinit var content: LinearLayout
@@ -86,6 +91,7 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
         }
         actionButton("🔎 فحص رابط متقدم") { showLinkCheck() }
+        actionButton("🗂️ سجل تقارير الفحص") { showHistory() }
         content.addView(paragraph("فحص الروابط يعتمد على مؤشرات محلية ولا يفتح الرابط أو يتصل بأي خادم. النتيجة ليست ضماناً لسلامة الموقع."))
     }
 
@@ -220,6 +226,61 @@ class MainActivity : Activity() {
     private fun containsConfusableLookalike(label: String): Boolean {
         val lookalikes = "аАеЕоОрРсСхХуУіІјЈԁԛ"
         return label.any { it in lookalikes }
+    }
+
+    private fun saveReport(url: String, report: String) {
+        val prefs = getSharedPreferences("phone_guardian_history", MODE_PRIVATE)
+        val oldItems = runCatching { JSONArray(prefs.getString("reports", "[]") ?: "[]") }
+            .getOrDefault(JSONArray())
+        val updated = JSONArray()
+        updated.put(JSONObject().apply {
+            put("date", SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date()))
+            put("url", url)
+            put("report", report)
+        })
+        for (i in 0 until minOf(oldItems.length(), 19)) {
+            updated.put(oldItems.getJSONObject(i))
+        }
+        prefs.edit().putString("reports", updated.toString()).apply()
+    }
+
+    private fun showHistory() {
+        content = baseLayout()
+        content.addView(title("🗂️ سجل تقارير الفحص"))
+        val prefs = getSharedPreferences("phone_guardian_history", MODE_PRIVATE)
+        val reports = runCatching { JSONArray(prefs.getString("reports", "[]") ?: "[]") }
+            .getOrDefault(JSONArray())
+
+        if (reports.length() == 0) {
+            content.addView(paragraph("لا توجد تقارير محفوظة بعد. افحص رابطاً أولاً وسيظهر تقريره هنا."))
+        } else {
+            content.addView(paragraph("التقارير محفوظة محلياً على هذا الهاتف. العدد: ${reports.length()}"))
+            for (i in 0 until reports.length()) {
+                val item = reports.getJSONObject(i)
+                val card = TextView(this).apply {
+                    text = "📅 ${item.optString("date")}\n🔗 ${item.optString("url")}\n\n${item.optString("report")}"
+                    textSize = 15f
+                    setTextColor(navy)
+                    setPadding(14, 14, 14, 18)
+                    setBackgroundColor(Color.WHITE)
+                }
+                content.addView(card, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 14 })
+            }
+            actionButton("🗑️ مسح سجل التقارير") {
+                AlertDialog.Builder(this)
+                    .setTitle("مسح سجل التقارير")
+                    .setMessage("هل تريد حذف جميع التقارير المحفوظة من هذا الهاتف؟")
+                    .setNegativeButton("إلغاء", null)
+                    .setPositiveButton("مسح") { _, _ ->
+                        prefs.edit().remove("reports").apply()
+                        showHistory()
+                    }
+                    .show()
+            }
+        }
+        actionButton("رجوع") { showHome() }
     }
 
     private fun showLinkCheck() {
@@ -424,7 +485,9 @@ class MainActivity : Activity() {
                 score >= 2 -> "النصيحة: تحقق من اسم النطاق والمرسل، ولا تدخل بيانات حساسة."
                 else -> "النصيحة: تأكد دائماً من عنوان الموقع والمرسل قبل إدخال أي معلومات."
             }
-            result.text = "مستوى التنبيه: $level ($score/10)\n\n$details\n\n$advice\n\nملاحظة: هذا تقييم تقريبي يعتمد على شكل الرابط فقط؛ لا يفحص محتوى الموقع ولا يضمن اكتشاف كل عمليات التصيد."
+            val report = "مستوى التنبيه: $level ($score/10)\n\n$details\n\n$advice\n\nملاحظة: هذا تقييم تقريبي يعتمد على شكل الرابط فقط؛ لا يفحص محتوى الموقع ولا يضمن اكتشاف كل عمليات التصيد."
+            result.text = report
+            saveReport(raw, report)
         }
         actionButton("📋 نسخ تقرير الفحص") {
             val report = result.text.toString()
