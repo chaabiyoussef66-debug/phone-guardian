@@ -254,14 +254,30 @@ class MainActivity : Activity() {
                 }
             }
             val parsed = try { URI(normalized) } catch (_: Exception) { null }
-            if (parsed == null || parsed.host.isNullOrBlank()) {
+            if (parsed == null || parsed.rawAuthority.isNullOrBlank()) {
                 result.text = "تعذّر قراءة الرابط. تأكد من كتابة اسم الموقع بشكل صحيح، مثل https://example.com"
                 return@actionButton
             }
 
-            val host = parsed.host.lowercase(Locale.ROOT).trimEnd('.')
-            val scheme = parsed.scheme?.lowercase(Locale.ROOT) ?: ""
+            // java.net.URI may leave host null for a valid Unicode/IDN authority.
+            // Read the raw authority and extract the hostname without requiring ASCII.
             val authority = parsed.rawAuthority ?: ""
+            val authorityWithoutUserInfo = authority.substringAfterLast('@')
+            val extractedHost = when {
+                authorityWithoutUserInfo.startsWith("[") -> {
+                    authorityWithoutUserInfo.substringBefore("]").removePrefix("[")
+                }
+                authorityWithoutUserInfo.count { it == ':' } == 1 ->
+                    authorityWithoutUserInfo.substringBeforeLast(':')
+                else -> authorityWithoutUserInfo
+            }
+            if (extractedHost.isBlank()) {
+                result.text = "تعذّر قراءة اسم الموقع. تأكد من كتابة الرابط بشكل صحيح."
+                return@actionButton
+            }
+
+            val host = extractedHost.lowercase(Locale.ROOT).trimEnd('.')
+            val scheme = parsed.scheme?.lowercase(Locale.ROOT) ?: ""
             val userInfo = parsed.rawUserInfo
             if (raw.length > 180) findings.add(1 to "الرابط طويل بشكل غير معتاد؛ تحقق من مصدره.")
             if (!userInfo.isNullOrBlank() || authority.substringBeforeLast('@', "").isNotEmpty()) {
