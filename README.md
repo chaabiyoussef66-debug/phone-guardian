@@ -11,3 +11,7 @@ Release signing verification run.
 
 ## v1.12
 - Added an Arabic button to copy the complete local link scan report to the clipboard.
+
+
+## v1.13
+- Added a local history of the latest 20 link scan reports, stored on the device, with an option to clear the history.
