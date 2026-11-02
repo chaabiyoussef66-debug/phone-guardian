@@ -203,6 +203,22 @@ class MainActivity : Activity() {
             value.startsWith("fd") || value.startsWith("fe80:")
     }
 
+    // Detect mixed writing systems and common Cyrillic/Greek lookalike letters.
+    // This is a warning heuristic, not proof that a domain is malicious.
+    private fun hasMixedScripts(label: String): Boolean {
+        val scripts = label.filter { it.isLetter() }
+            .map { Character.UnicodeScript.of(it.code) }
+            .filter { it != Character.UnicodeScript.COMMON &&
+                it != Character.UnicodeScript.INHERITED }
+            .distinct()
+        return scripts.size > 1
+    }
+
+    private fun containsConfusableLookalike(label: String): Boolean {
+        val lookalikes = "аАеЕоОрРсСхХуУіІјЈԁԛ"
+        return label.any { it in lookalikes }
+    }
+
     private fun showLinkCheck() {
         content = baseLayout()
         content.addView(title("فحص رابط متقدم"))
@@ -259,6 +275,15 @@ class MainActivity : Activity() {
 
             if (host.startsWith("xn--") || host.split(".").any { it.startsWith("xn--") }) {
                 findings.add(2 to "اسم النطاق يستخدم ترميز IDN؛ افحص تهجئة الموقع بعناية لاحتمال تشابه الحروف.")
+            }
+
+            val unicodeLabels = host.split(".").map { label ->
+                runCatching { java.net.IDN.toUnicode(label) }.getOrDefault(label)
+            }
+            val mixedScriptLabels = unicodeLabels.filter { hasMixedScripts(it) }
+            val confusableLabels = unicodeLabels.filter { containsConfusableLookalike(it) }
+            if (mixedScriptLabels.isNotEmpty() || confusableLabels.isNotEmpty()) {
+                findings.add(3 to "اسم النطاق يحتوي حروفاً قد تتشابه بصرياً أو يمزج أنظمة كتابة مختلفة؛ دقّق في كل حرف وتأكد من النطاق الرسمي.")
             }
             if (isLocalHostname(host)) {
                 findings.add(0 to "اسم محلي أو داخلي؛ يُستخدم عادة داخل الشبكة ولا يعني وحده وجود خطر.")
