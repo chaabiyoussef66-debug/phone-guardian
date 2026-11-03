@@ -157,13 +157,41 @@ class MainActivity : Activity() {
             val isImage = kind in setOf("PNG","JPEG","GIF","WEBP") || kind.startsWith("صورة/")
             if (ext in imageExt && !isImage) findings.add("الامتداد يوحي بأنها صورة لكن ترويسة المحتوى لا تطابق صورة معروفة.")
             if (isImage && !mime.startsWith("image/") && mime != "غير معروف") findings.add("نوع MIME المعلن لا يتوافق بوضوح مع ترويسة الصورة.")
+
+            // Static, non-executing inspection for Python source files.
+            // These patterns are warning indicators only and can produce false positives.
+            var pythonAnalysis = "لم يُجرَ تحليل محتوى Python لهذا الملف."
+            if (ext == "py" || mime == "text/x-python") {
+                val source = String(bytes.copyOfRange(0, minOf(bytes.size, 1024 * 1024)), Charsets.UTF_8)
+                val codeFindings = mutableListOf<String>()
+                fun checkCode(pattern: String, message: String) {
+                    if (Regex(pattern, setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)).containsMatchIn(source)) {
+                        codeFindings.add(message)
+                    }
+                }
+                checkCode("""\b(?:eval|exec)\s*\(""", "يستعمل eval أو exec لتنفيذ نص برمجي؛ راجع مصدر النص قبل تشغيل الملف.")
+                checkCode("""\b(?:os\.system|os\.popen|subprocess\.(?:Popen|run|call|check_call|check_output))\s*\(""", "يستدعي أوامر النظام أو عمليات خارجية؛ قد يكون ذلك مشروعاً لكنه يحتاج مراجعة.")
+                checkCode("""\b(?:os\.remove|os\.unlink|shutil\.rmtree)\s*\(""", "يحتوي على أوامر قد تحذف ملفات أو مجلدات.")
+                checkCode("""\b(?:pickle\.loads|marshal\.loads)\s*\(""", "يستعمل تحميل بيانات Python متسلسلة؛ لا تستخدم بيانات من مصدر غير موثوق.")
+                val hasNetwork = Regex("""\b(?:urlopen|requests\.(?:get|post)|httpx\.(?:get|post))\s*\(""", RegexOption.IGNORE_CASE).containsMatchIn(source)
+                val hasExecution = Regex("""\b(?:exec|eval|os\.system|subprocess\.)""", RegexOption.IGNORE_CASE).containsMatchIn(source)
+                if (hasNetwork && hasExecution) codeFindings.add("يجمع بين الاتصال بالشبكة وتنفيذ أوامر/نصوص؛ تحقق من الوجهة والغرض.")
+                pythonAnalysis = if (codeFindings.isEmpty()) {
+                    "تحليل محتوى Python: لم تظهر الأنماط المحددة في هذا الفحص النصي المحدود."
+                } else {
+                    "تحليل محتوى Python - مؤشرات تستحق المراجعة:\n" + codeFindings.distinct().joinToString("\n") { "• $it" }
+                }
+                if (bytes.size > 1024 * 1024) {
+                    pythonAnalysis += "\nملاحظة: اقتصر تحليل النص على أول 1 ميغابايت."
+                }
+            }
             if (bytes.isEmpty()) findings.add("الملف فارغ.")
             if (bytes.size < 12 && bytes.isNotEmpty()) findings.add("الملف صغير جداً أو ترويسـته غير مكتملة.")
             val summary = if (findings.isEmpty()) "لم تظهر مؤشرات نوع/امتداد مريبة في الفحص المحلي."
                 else findings.joinToString("\n") { "• $it" }
             val advice = if (findings.isEmpty()) "لم نعثر على علامة مريبة من الاختبارات المحدودة. هذا لا يعني أن الملف خالٍ من الفيروسات."
                 else "لا تفتح الملف إذا لم تكن تثق بمصدره. استخدم حماية موثوقة ومحدّثة."
-            val report = "نتيجة فحص الملف\nالاسم: $displayName\nالنوع المعلن: $mime\nالترويسة المقروءة: $kind\nالحجم: ${bytes.size} بايت\nSHA-256: $digest\n\n$summary\n\nالنصيحة: $advice\n\nملاحظة: فحص محلي أولي للنوع والامتداد وبعض المؤشرات فقط؛ لا يشغّل الملف ولا يفحصه بمحرك مضاد فيروسات، ولا يضمن اكتشاف البرمجيات الخبيثة."
+            val report = "نتيجة فحص الملف\nالاسم: $displayName\nالنوع المعلن: $mime\nالترويسة المقروءة: $kind\nالحجم: ${bytes.size} بايت\nSHA-256: $digest\n\n$summary\n\n$pythonAnalysis\n\nالنصيحة: $advice\n\nملاحظة: فحص محلي أولي للنوع والامتداد وبعض الأنماط النصية فقط؛ لا يشغّل الملف ولا يفحصه بمحرك مضاد فيروسات، وقد يفوّت التهديدات أو يعطي تحذيرات غير دقيقة."
             result.text = report
             saveReport("ملف: $displayName", report)
         } catch (e: Exception) {
