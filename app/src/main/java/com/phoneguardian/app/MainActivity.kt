@@ -174,9 +174,9 @@ class MainActivity : Activity() {
                 checkCode("""\b(?:os\.system|os\.popen|subprocess\.(?:Popen|run|call|check_call|check_output))\s*\(""", "يستدعي أوامر النظام أو عمليات خارجية؛ قد يكون ذلك مشروعاً لكنه يحتاج مراجعة.")
                 checkCode("""\b(?:os\.remove|os\.unlink|shutil\.rmtree)\s*\(""", "يحتوي على أوامر قد تحذف ملفات أو مجلدات.")
                 checkCode("""\b(?:pickle\.loads|marshal\.loads)\s*\(""", "يستعمل تحميل بيانات Python متسلسلة؛ لا تستخدم بيانات من مصدر غير موثوق.")
-                val hasNetwork = Regex("""\\b(?:urlopen|requests\\.(?:get|post|request)|httpx\\.(?:get|post|request)|socket\\.(?:create_connection|connect))\\s*\\(""", RegexOption.IGNORE_CASE).containsMatchIn(source)
+                val hasNetwork = Regex("""\b(?:urlopen|requests\.(?:get|post|request)|httpx\.(?:get|post|request)|socket\.(?:create_connection|connect))\s*\(""", RegexOption.IGNORE_CASE).containsMatchIn(source)
                 if (hasNetwork) codeFindings.add("يجري اتصالاً بالشبكة؛ تحقق من عنوان الوجهة والبيانات التي تُرسل أو تُستقبل.")
-                val hasExecution = Regex("""\\b(?:exec|eval|os\\.system|subprocess\\.)""", RegexOption.IGNORE_CASE).containsMatchIn(source)
+                val hasExecution = Regex("""\b(?:exec|eval|os\.system|subprocess\.)""", RegexOption.IGNORE_CASE).containsMatchIn(source)
                 if (hasNetwork && hasExecution) codeFindings.add("يجمع بين الاتصال بالشبكة وتنفيذ أوامر/نصوص؛ تحقق من الوجهة والغرض.")
                 pythonHasIndicators = codeFindings.isNotEmpty()
                 pythonAnalysis = if (codeFindings.isEmpty()) {
