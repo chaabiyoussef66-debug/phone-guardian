@@ -9,6 +9,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.provider.OpenableColumns
+import java.security.MessageDigest
 import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
@@ -91,8 +93,92 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
         }
         actionButton("🔎 فحص رابط متقدم") { showLinkCheck() }
+        actionButton("📁 فحص ملف أو صورة") { chooseFileToScan() }
         actionButton("🗂️ سجل تقارير الفحص") { showHistory() }
         content.addView(paragraph("فحص الروابط يعتمد على مؤشرات محلية ولا يفتح الرابط أو يتصل بأي خادم. النتيجة ليست ضماناً لسلامة الموقع."))
+    }
+
+
+    private val filePickerRequest = 4107
+    private fun chooseFileToScan() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivityForResult(intent, filePickerRequest)
+    }
+    @Deprecated("Deprecated in Android API; retained for broad device compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == filePickerRequest && resultCode == RESULT_OK) data?.data?.let { scanSelectedFile(it) }
+    }
+    private fun scanSelectedFile(uri: Uri) {
+        content = baseLayout()
+        content.addView(title("📁 فحص الملف"))
+        val result = paragraph("جارٍ قراءة الملف وفحص مؤشرات نوعه...")
+        content.addView(result)
+        try {
+            val displayName = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "ملف غير معروف"
+            val mime = contentResolver.getType(uri)?.lowercase(Locale.ROOT) ?: "غير معروف"
+            val bytes = contentResolver.openInputStream(uri)?.use { input ->
+                val out = java.io.ByteArrayOutputStream(); val buffer = ByteArray(8192); var total = 0
+                while (true) {
+                    val n = input.read(buffer); if (n < 0) break
+                    total += n
+                    if (total > 25 * 1024 * 1024) throw IllegalArgumentException("حجم الملف أكبر من 25 ميغابايت.")
+                    out.write(buffer, 0, n)
+                }
+                out.toByteArray()
+            } ?: throw IllegalStateException("تعذرت قراءة الملف.")
+            val findings = mutableListOf<String>()
+            val lowerName = displayName.lowercase(Locale.ROOT)
+            val ext = lowerName.substringAfterLast('.', "")
+            val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            fun has(vararg v: Int): Boolean = bytes.size >= v.size && v.indices.all { (bytes[it].toInt() and 255) == v[it] }
+            val kind = when {
+                has(0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a) -> "PNG"
+                has(0xff,0xd8,0xff) -> "JPEG"
+                has(0x47,0x49,0x46,0x38) -> "GIF"
+                bytes.size >= 12 && String(bytes,0,4,Charsets.US_ASCII) == "RIFF" && String(bytes,8,4,Charsets.US_ASCII) == "WEBP" -> "WEBP"
+                bytes.size >= 12 && String(bytes,4,4,Charsets.US_ASCII) == "ftyp" -> "صورة/وسائط ISO-BMFF (قد تكون HEIC/HEIF)"
+                has(0x25,0x50,0x44,0x46) -> "PDF"
+                has(0x4d,0x5a) -> "ملف تنفيذي Windows (MZ/PE محتمل)"
+                has(0x7f,0x45,0x4c,0x46) -> "ملف تنفيذي Linux/Android (ELF)"
+                has(0x50,0x4b,0x03,0x04) -> "أرشيف ZIP (قد يحتوي APK أو ملفات أخرى)"
+                has(0x64,0x65,0x78,0x0a) -> "ملف DEX/Android"
+                else -> "نوع غير محدد من الترويسة"
+            }
+            val imageExt = setOf("jpg","jpeg","png","gif","webp","bmp","heic","heif","tif","tiff")
+            val riskyExt = setOf("apk","exe","msi","bat","cmd","scr","js","jar","sh","dex")
+            if (ext in riskyExt) findings.add("امتداد قابل للتنفيذ أو قد يشغّل تعليمات برمجية؛ لا تفتحه إلا من مصدر موثوق.")
+            if (lowerName.matches(Regex(""".+\.(jpg|jpeg|png|gif|webp|pdf|doc|docx|txt)\.(apk|exe|scr|bat|js)""")))
+                findings.add("اسم الملف يحتوي امتداداً مزدوجاً قد يخفي نوعه الحقيقي.")
+            val isImage = kind in setOf("PNG","JPEG","GIF","WEBP") || kind.startsWith("صورة/")
+            if (ext in imageExt && !isImage) findings.add("الامتداد يوحي بأنها صورة لكن ترويسة المحتوى لا تطابق صورة معروفة.")
+            if (isImage && !mime.startsWith("image/") && mime != "غير معروف") findings.add("نوع MIME المعلن لا يتوافق بوضوح مع ترويسة الصورة.")
+            if (bytes.isEmpty()) findings.add("الملف فارغ.")
+            if (bytes.size < 12 && bytes.isNotEmpty()) findings.add("الملف صغير جداً أو ترويسـته غير مكتملة.")
+            val summary = if (findings.isEmpty()) "لم تظهر مؤشرات نوع/امتداد مريبة في الفحص المحلي."
+                else findings.joinToString("\n") { "• $it" }
+            val advice = if (findings.isEmpty()) "لم نعثر على علامة مريبة من الاختبارات المحدودة. هذا لا يعني أن الملف خالٍ من الفيروسات."
+                else "لا تفتح الملف إذا لم تكن تثق بمصدره. استخدم حماية موثوقة ومحدّثة."
+            val report = "نتيجة فحص الملف\nالاسم: $displayName\nالنوع المعلن: $mime\nالترويسة المقروءة: $kind\nالحجم: ${bytes.size} بايت\nSHA-256: $digest\n\n$summary\n\nالنصيحة: $advice\n\nملاحظة: فحص محلي أولي للنوع والامتداد وبعض المؤشرات فقط؛ لا يشغّل الملف ولا يفحصه بمحرك مضاد فيروسات، ولا يضمن اكتشاف البرمجيات الخبيثة."
+            result.text = report
+            saveReport("ملف: $displayName", report)
+        } catch (e: Exception) {
+            result.text = "تعذر إكمال الفحص: ${e.message ?: "خطأ غير معروف"}\n\nلم يتم تشغيل الملف."
+        }
+        actionButton("📋 نسخ تقرير الفحص") {
+            val report = result.text.toString()
+            if (!report.startsWith("نتيجة فحص الملف")) Toast.makeText(this,"لا يوجد تقرير لنسخه.",Toast.LENGTH_SHORT).show()
+            else {
+                val cb = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                cb.setPrimaryClip(ClipData.newPlainText("Phone Guardian - فحص ملف",report))
+                Toast.makeText(this,"تم نسخ التقرير.",Toast.LENGTH_SHORT).show()
+            }
+        }
+        actionButton("رجوع") { showHome() }
     }
 
     private fun showDeviceInfo() {
