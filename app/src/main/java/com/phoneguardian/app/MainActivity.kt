@@ -257,12 +257,24 @@ class MainActivity : Activity() {
             content.addView(paragraph("التقارير محفوظة محلياً على هذا الهاتف. العدد: ${reports.length()}"))
             for (i in 0 until reports.length()) {
                 val item = reports.getJSONObject(i)
+                val reportDate = item.optString("date")
+                val reportUrl = item.optString("url")
+                val reportText = item.optString("report")
                 val card = TextView(this).apply {
-                    text = "📅 ${item.optString("date")}\n🔗 ${item.optString("url")}\n\n${item.optString("report")}"
+                    text = "📅 $reportDate\n🔗 $reportUrl\n\nاضغط لعرض تفاصيل التقرير"
                     textSize = 15f
                     setTextColor(navy)
                     setPadding(14, 14, 14, 18)
                     setBackgroundColor(Color.WHITE)
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("تفاصيل تقرير الفحص")
+                            .setMessage("التاريخ: $reportDate\n\nالرابط:\n$reportUrl\n\n$reportText")
+                            .setPositiveButton("إغلاق", null)
+                            .show()
+                    }
                 }
                 content.addView(card, LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
