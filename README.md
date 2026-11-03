@@ -15,3 +15,7 @@ Release signing verification run.
 
 ## v1.13
 - Added a local history of the latest 20 link scan reports, stored on the device, with an option to clear the history.
+
+
+## v1.14
+- History entries are now compact and tappable; tapping one opens the full saved scan report in a details dialog.
