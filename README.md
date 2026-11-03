@@ -30,3 +30,9 @@ Release signing verification run.
 ## v1.16
 - Added non-executing, limited text-pattern inspection for Python files (dynamic execution, shell/process calls, deletion, unsafe deserialization, and network-plus-execution indicators).
 - Python checks are heuristic warnings only; they can miss threats and produce false positives. No file is executed or uploaded.
+
+
+## v1.17
+- Corrected file-scan advice so Python content indicators are reflected in the final recommendation.
+- Added independent warnings for Python network access patterns, alongside process execution and unsafe deserialization indicators.
+- Findings remain heuristic only; they are not proof of malware. Files are not executed or uploaded.
