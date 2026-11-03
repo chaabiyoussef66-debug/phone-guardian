@@ -91,8 +91,40 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
         }
         actionButton("🔎 فحص رابط متقدم") { showLinkCheck() }
+        actionButton("🖼️ فحص صورة أو ملف") { showFileScan() }
         actionButton("🗂️ سجل تقارير الفحص") { showHistory() }
         content.addView(paragraph("فحص الروابط يعتمد على مؤشرات محلية ولا يفتح الرابط أو يتصل بأي خادم. النتيجة ليست ضماناً لسلامة الموقع."))
+    }
+
+    private var fileScanResult: TextView? = null
+    private val pickFileRequest = 4107
+
+    private fun showFileScan() {
+        content = baseLayout()
+        content.addView(title("🖼️ فحص صورة أو ملف"))
+        content.addView(paragraph("اختر صورة أو ملفاً من الهاتف لفحص نوعه الحقيقي وبنيته وبعض المؤشرات المشبوهة. الفحص محلي ولا يرفع الملف إلى الإنترنت."))
+        fileScanResult = paragraph("لم يتم اختيار أي ملف بعد.")
+        content.addView(fileScanResult)
+        actionButton("اختيار صورة أو ملف للفحص") {
+            val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivityForResult(picker, pickFileRequest)
+        }
+        actionButton("رجوع") { showHome() }
+    }
+
+    @Deprecated("Deprecated in Android API; retained for compatibility with Android 11")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != pickFileRequest || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        val report = runCatching { FileScanner.scan(this, uri) }
+            .getOrElse { "تعذّر فحص الملف بسبب خطأ في القراءة: " + (it.message ?: "غير معروف") }
+        fileScanResult?.text = report
+        saveReport("فحص ملف: " + (uri.lastPathSegment ?: "ملف مختار"), report)
     }
 
     private fun showDeviceInfo() {
