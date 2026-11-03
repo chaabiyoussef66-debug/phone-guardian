@@ -152,37 +152,25 @@ class MainActivity : Activity() {
             val imageExt = setOf("jpg","jpeg","png","gif","webp","bmp","heic","heif","tif","tiff")
             val riskyExt = setOf("apk","exe","msi","bat","cmd","scr","js","jar","sh","dex")
             if (ext in riskyExt) findings.add("امتداد قابل للتنفيذ أو قد يشغّل تعليمات برمجية؛ لا تفتحه إلا من مصدر موثوق.")
-            if (lowerName.matches(Regex(""".+\.(jpg|jpeg|png|gif|webp|pdf|doc|docx|txt)\.(apk|exe|scr|bat|js)""")))
-                findings.add("اسم الملف يحتوي امتداداً مزدوجاً قد يخفي نوعه الحقيقي.")
-            val isImage = kind in setOf("PNG","JPEG","GIF","WEBP") || kind.startsWith("صورة/")
-            if (ext in imageExt && !isImage) findings.add("الامتداد يوحي بأنها صورة لكن ترويسة المحتوى لا تطابق صورة معروفة.")
-            if (isImage && !mime.startsWith("image/") && mime != "غير معروف") findings.add("نوع MIME المعلن لا يتوافق بوضوح مع ترويسة الصورة.")
-
-            // Static, non-executing inspection for Python source files.
-            // These patterns are warning indicators only and can produce false positives.
-            var pythonAnalysis = "لم يُجرَ تحليل محتوى Python لهذا الملف."
-            var pythonHasIndicators = false
-            if (ext == "py" || mime == "text/x-python") {
-                val source = String(bytes.copyOfRange(0, minOf(bytes.size, 1024 * 1024)), Charsets.UTF_8)
-                val codeFindings = mutableListOf<String>()
-                fun checkCode(pattern: String, message: String) {
-                    if (Regex(pattern, setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)).containsMatchIn(source)) {
-                        codeFindings.add(message)
-                    }
-                }
-                checkCode("""\b(?:eval|exec)\s*\(""", "يستعمل eval أو exec لتنفيذ نص برمجي؛ راجع مصدر النص قبل تشغيل الملف.")
-                checkCode("""\b(?:os\.system|os\.popen|subprocess\.(?:Popen|run|call|check_call|check_output))\s*\(""", "يستدعي أوامر النظام أو عمليات خارجية؛ قد يكون ذلك مشروعاً لكنه يحتاج مراجعة.")
-                checkCode("""\b(?:os\.remove|os\.unlink|shutil\.rmtree)\s*\(""", "يحتوي على أوامر قد تحذف ملفات أو مجلدات.")
-                checkCode("""\b(?:pickle\.loads|marshal\.loads)\s*\(""", "يستعمل تحميل بيانات Python متسلسلة؛ لا تستخدم بيانات من مصدر غير موثوق.")
-                val hasNetwork = Regex("""\b(?:urlopen|requests\.(?:get|post|request)|httpx\.(?:get|post|request)|socket\.(?:create_connection|connect))\s*\(""", RegexOption.IGNORE_CASE).containsMatchIn(source)
-                if (hasNetwork) codeFindings.add("يجري اتصالاً بالشبكة؛ تحقق من عنوان الوجهة والبيانات التي تُرسل أو تُستقبل.")
-                val hasExecution = Regex("""\b(?:exec|eval|os\.system|subprocess\.)""", RegexOption.IGNORE_CASE).containsMatchIn(source)
-                if (hasNetwork && hasExecution) codeFindings.add("يجمع بين الاتصال بالشبكة وتنفيذ أوامر/نصوص؛ تحقق من الوجهة والغرض.")
-                pythonHasIndicators = codeFindings.isNotEmpty()
-                pythonAnalysis = if (codeFindings.isEmpty()) {
-                    "تحليل محتوى Python: لم تظهر الأنماط المحددة في هذا الفحص النصي المحدود."
-                } else {
-                    "تحليل محتوى Python - مؤشرات تستحق المراجعة:\n" + codeFindings.distinct().joinToString("\n") { "• $it" }
+            val misleadingExt = setOf(
+                "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic",
+                "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+                "txt", "rtf", "csv", "mp3", "mp4", "avi", "mov",
+                "zip", "rar", "7z"
+            )
+            val executableExt = setOf(
+                "apk", "exe", "msi", "scr", "bat", "cmd", "com",
+                "pif", "js", "vbs", "vbe", "wsf", "hta", "ps1",
+                "jar", "sh", "dex", "dll", "cpl", "reg", "lnk"
+            )
+            val nameParts = lowerName.trimEnd(' ', '.').split('.')
+            if (nameParts.size >= 3 &&
+                nameParts.drop(1).dropLast(1).any { it in misleadingExt } &&
+                nameParts.last() in executableExt
+            ) {
+                findings.add("اسم الملف يحتوي امتداداً مزدوجاً أو مخادعاً قد يخفي ملفاً قابلاً للتنفيذ.")
+            }
+n" + codeFindings.distinct().joinToString("\n") { "• $it" }
                 }
                 if (bytes.size > 1024 * 1024) {
                     pythonAnalysis += "\nملاحظة: اقتصر تحليل النص على أول 1 ميغابايت."
