@@ -25,3 +25,8 @@ Release signing verification run.
 - Added local file/image preliminary inspection using Android's document picker.
 - Checks file signatures against extensions, flags selected risky extensions and double extensions, and reports SHA-256.
 - Does not execute or upload files and is not a full antivirus scanner.
+
+
+## v1.16
+- Added non-executing, limited text-pattern inspection for Python files (dynamic execution, shell/process calls, deletion, unsafe deserialization, and network-plus-execution indicators).
+- Python checks are heuristic warnings only; they can miss threats and produce false positives. No file is executed or uploaded.
