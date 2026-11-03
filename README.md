@@ -36,3 +36,6 @@ Release signing verification run.
 - Corrected file-scan advice so Python content indicators are reflected in the final recommendation.
 - Added independent warnings for Python network access patterns, alongside process execution and unsafe deserialization indicators.
 - Findings remain heuristic only; they are not proof of malware. Files are not executed or uploaded.
+
+
+Build validation for v1.17.
