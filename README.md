@@ -19,3 +19,9 @@ Release signing verification run.
 
 ## v1.14
 - History entries are now compact and tappable; tapping one opens the full saved scan report in a details dialog.
+
+
+## v1.15
+- Added local file/image preliminary inspection using Android's document picker.
+- Checks file signatures against extensions, flags selected risky extensions and double extensions, and reports SHA-256.
+- Does not execute or upload files and is not a full antivirus scanner.
