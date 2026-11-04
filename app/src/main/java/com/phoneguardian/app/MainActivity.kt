@@ -194,13 +194,47 @@ class MainActivity : Activity() {
                 }
                 if (end >= 0 && hasNonPaddingTail(end)) findings.add("توجد بيانات غير فارغة بعد علامة نهاية JPEG؛ قد تكون بيانات ملحقة، وهذا ليس دليلاً وحده على البرمجيات الخبيثة.")
             } else if (kind == "PNG") {
-                val marker = "IEND".toByteArray(Charsets.US_ASCII)
-                var pos = -1
-                for (i in 0..bytes.size - marker.size) {
-                    if (marker.indices.all { bytes[i + it] == marker[it] }) pos = i
+                // Walk PNG chunks from the header; do not mistake the word IEND
+                // inside compressed image data for the real end marker.
+                var offset = 8
+                var pngEnded = false
+                var pngMalformed = false
+                while (offset + 12 <= bytes.size) {
+                    val chunkLength = ((bytes[offset].toLong() and 255L) shl 24) or
+                        ((bytes[offset + 1].toLong() and 255L) shl 16) or
+                        ((bytes[offset + 2].toLong() and 255L) shl 8) or
+                        (bytes[offset + 3].toLong() and 255L)
+                    if (chunkLength > Int.MAX_VALUE.toLong() ||
+                        chunkLength > bytes.size.toLong() - offset.toLong() - 12L) {
+                        pngMalformed = true
+                        break
+                    }
+                    val chunkType = String(bytes, offset + 4, 4, Charsets.US_ASCII)
+                    offset += 12 + chunkLength.toInt()
+                    if (chunkType == "IEND") {
+                        if (chunkLength != 0L) pngMalformed = true
+                        pngEnded = true
+                        break
+                    }
                 }
-                val end = if (pos >= 0) pos + 8 else -1
-                if (end >= 0 && hasNonPaddingTail(end)) findings.add("توجد بيانات غير فارغة بعد نهاية بنية PNG؛ تستحق المراجعة.")
+                if (!pngEnded) {
+                    findings.add("بنية PNG غير مكتملة أو لا تحتوي على كتلة نهاية IEND في الموضع المتوقع.")
+                } else {
+                    if (pngMalformed) findings.add("بنية PNG تحتوي على طول كتلة غير صالح أو غير مكتمل.")
+                    if (hasNonPaddingTail(offset)) findings.add("توجد بيانات غير فارغة بعد نهاية بنية PNG؛ تستحق المراجعة، ولا تثبت وحدها وجود برمجية خبيثة.")
+                }
+            } else if (kind == "WEBP") {
+                // RIFF stores the declared payload length as a little-endian 32-bit value.
+                val riffLength = (bytes[4].toLong() and 255L) or
+                    ((bytes[5].toLong() and 255L) shl 8) or
+                    ((bytes[6].toLong() and 255L) shl 16) or
+                    ((bytes[7].toLong() and 255L) shl 24)
+                val declaredEnd = 8L + riffLength
+                if (declaredEnd < 12L || declaredEnd > bytes.size.toLong()) {
+                    findings.add("حجم RIFF المعلن داخل WebP لا يتوافق مع حجم الملف؛ قد يكون الملف مبتوراً أو بنيته غير سليمة.")
+                } else if (declaredEnd < bytes.size.toLong() && hasNonPaddingTail(declaredEnd.toInt())) {
+                    findings.add("توجد بيانات غير فارغة بعد نهاية RIFF المعلنة في WebP؛ تستحق المراجعة ولا تثبت وحدها وجود برمجية خبيثة.")
+                }
             } else if (kind == "GIF") {
                 val end = bytes.indexOf(0x3b.toByte()) + 1
                 if (end > 0 && hasNonPaddingTail(end)) findings.add("توجد بيانات غير فارغة بعد علامة نهاية GIF؛ تستحق المراجعة.")
