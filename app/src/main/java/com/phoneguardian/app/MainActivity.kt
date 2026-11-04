@@ -93,7 +93,7 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
         }
         actionButton("🔎 فحص رابط متقدم") { showLinkCheck() }
-        actionButton("📁 فحص ملف أو صورة") { chooseFileToScan() }
+        actionButton("🛡️ فحص الصور وPDF والفيديو والصوت") { chooseFileToScan() }
         actionButton("🗂️ سجل تقارير الفحص") { showHistory() }
         content.addView(paragraph("فحص الروابط يعتمد على مؤشرات محلية ولا يفتح الرابط أو يتصل بأي خادم. النتيجة ليست ضماناً لسلامة الموقع."))
     }
@@ -141,7 +141,14 @@ class MainActivity : Activity() {
                 has(0xff,0xd8,0xff) -> "JPEG"
                 has(0x47,0x49,0x46,0x38) -> "GIF"
                 bytes.size >= 12 && String(bytes,0,4,Charsets.US_ASCII) == "RIFF" && String(bytes,8,4,Charsets.US_ASCII) == "WEBP" -> "WEBP"
-                bytes.size >= 12 && String(bytes,4,4,Charsets.US_ASCII) == "ftyp" -> "صورة/وسائط ISO-BMFF (قد تكون HEIC/HEIF)"
+                bytes.size >= 12 && String(bytes,0,4,Charsets.US_ASCII) == "RIFF" && String(bytes,8,4,Charsets.US_ASCII) == "WAVE" -> "WAV"
+                bytes.size >= 12 && String(bytes,0,4,Charsets.US_ASCII) == "RIFF" && String(bytes,8,4,Charsets.US_ASCII) == "AVI " -> "AVI"
+                bytes.size >= 12 && String(bytes,4,4,Charsets.US_ASCII) == "ftyp" -> "ISO-BMFF"
+                bytes.size >= 3 && String(bytes,0,3,Charsets.US_ASCII) == "ID3" -> "MP3"
+                bytes.size >= 4 && String(bytes,0,4,Charsets.US_ASCII) == "OggS" -> "OGG"
+                bytes.size >= 4 && String(bytes,0,4,Charsets.US_ASCII) == "fLaC" -> "FLAC"
+                bytes.size >= 4 && has(0x1a,0x45,0xdf,0xa3) -> "Matroska/WebM"
+                bytes.size >= 2 && (bytes[0].toInt() and 255) == 0xff && ((bytes[1].toInt() and 0xe0) == 0xe0) -> "MP3/ MPEG audio"
                 has(0x25,0x50,0x44,0x46) -> "PDF"
                 has(0x4d,0x5a) -> "ملف تنفيذي Windows (MZ/PE محتمل)"
                 has(0x7f,0x45,0x4c,0x46) -> "ملف تنفيذي Linux/Android (ELF)"
@@ -170,9 +177,73 @@ class MainActivity : Activity() {
             ) {
                 findings.add("اسم الملف يحتوي امتداداً مزدوجاً أو مخادعاً قد يخفي ملفاً قابلاً للتنفيذ.")
             }
-            val isImage = kind in setOf("PNG","JPEG","GIF","WEBP") || kind.startsWith("صورة/")
+            val isImage = kind in setOf("PNG","JPEG","GIF","WEBP")
+            val isVideo = kind in setOf("AVI","ISO-BMFF","Matroska/WebM")
+            val isAudio = kind in setOf("WAV","MP3","OGG","FLAC")
             if (ext in imageExt && !isImage) findings.add("الامتداد يوحي بأنها صورة لكن ترويسة المحتوى لا تطابق صورة معروفة.")
             if (isImage && !mime.startsWith("image/") && mime != "غير معروف") findings.add("نوع MIME المعلن لا يتوافق بوضوح مع ترويسة الصورة.")
+
+            fun hasNonPaddingTail(start: Int): Boolean =
+                start < bytes.size && (start until bytes.size).any {
+                    val value = bytes[it].toInt() and 255
+                    value != 0 && value != 9 && value != 10 && value != 13 && value != 32
+                }
+            if (kind == "JPEG") {
+                var end = -1
+                for (i in 0 until bytes.size - 1) {
+                    if ((bytes[i].toInt() and 255) == 0xff && (bytes[i + 1].toInt() and 255) == 0xd9) end = i + 2
+                }
+                if (end >= 0 && hasNonPaddingTail(end)) findings.add("توجد بيانات غير فارغة بعد علامة نهاية JPEG؛ قد تكون بيانات ملحقة، وهذا ليس دليلاً وحده على البرمجيات الخبيثة.")
+            } else if (kind == "PNG") {
+                val marker = "IEND".toByteArray(Charsets.US_ASCII)
+                var pos = -1
+                for (i in 0..bytes.size - marker.size) {
+                    if (marker.indices.all { bytes[i + it] == marker[it] }) pos = i
+                }
+                val end = if (pos >= 0) pos + 8 else -1
+                if (end >= 0 && hasNonPaddingTail(end)) findings.add("توجد بيانات غير فارغة بعد نهاية بنية PNG؛ تستحق المراجعة.")
+            } else if (kind == "GIF") {
+                val end = bytes.indexOf(0x3b.toByte()) + 1
+                if (end > 0 && hasNonPaddingTail(end)) findings.add("توجد بيانات غير فارغة بعد علامة نهاية GIF؛ تستحق المراجعة.")
+            }
+
+            if (kind == "PDF") {
+                val pdfSample = String(bytes.copyOfRange(0, minOf(bytes.size, 5 * 1024 * 1024)), Charsets.ISO_8859_1)
+                val pdfChecks = listOf(
+                    Regex("""/JavaScript\b|/JS\b""", RegexOption.IGNORE_CASE) to "يحتوي PDF على مؤشرات JavaScript مضمّن.",
+                    Regex("""/OpenAction\b|/AA\b""", RegexOption.IGNORE_CASE) to "يحتوي PDF على إجراءات تلقائية عند الفتح أو أحداث إضافية.",
+                    Regex("""/Launch\b""", RegexOption.IGNORE_CASE) to "يحتوي PDF على إجراء Launch قد يحاول تشغيل عنصر خارجي.",
+                    Regex("""/EmbeddedFile\b|/Filespec\b""", RegexOption.IGNORE_CASE) to "يحتوي PDF على مؤشرات ملفات مضمّنة أو مرفقات.",
+                    Regex("""/RichMedia\b""", RegexOption.IGNORE_CASE) to "يحتوي PDF على عناصر RichMedia تحتاج إلى مراجعة."
+                )
+                pdfChecks.forEach { (pattern, message) -> if (pattern.containsMatchIn(pdfSample)) findings.add(message) }
+                val tail = String(bytes.copyOfRange(maxOf(0, bytes.size - 65536), bytes.size), Charsets.ISO_8859_1)
+                val eof = tail.lastIndexOf("%%EOF")
+                if (eof >= 0 && tail.substring(eof + 5).any { !it.isWhitespace() && it.code >= 32 }) {
+                    findings.add("توجد بيانات غير بيضاء بعد علامة نهاية PDF الأخيرة؛ قد تكون بيانات ملحقة أو تحديثاً غير معتاد.")
+                }
+                if (bytes.size > 5 * 1024 * 1024) findings.add("اقتصر تحليل مؤشرات PDF البنيوية على أول 5 ميغابايت وآخر 64 كيلوبايت.")
+            }
+
+            val mediaExtensions = mapOf(
+                "AVI" to setOf("avi"), "ISO-BMFF" to setOf("mp4","m4v","mov","heic","heif"),
+                "Matroska/WebM" to setOf("mkv","webm"), "WAV" to setOf("wav"),
+                "MP3" to setOf("mp3"), "MP3/ MPEG audio" to setOf("mp3","mp2"),
+                "OGG" to setOf("ogg","oga","ogv"), "FLAC" to setOf("flac")
+            )
+            val expected = mediaExtensions[kind]
+            if (expected != null && ext !in expected) findings.add("امتداد الملف لا يطابق صيغة الوسائط التي تشير إليها الترويسة ($kind).")
+            if (isVideo && !mime.startsWith("video/") && mime != "غير معروف" && !mime.startsWith("application/octet-stream")) {
+                findings.add("نوع MIME المعلن لا يتوافق بوضوح مع حاوية الفيديو المكتشفة.")
+            }
+            if (isAudio && !mime.startsWith("audio/") && mime != "غير معروف" && !mime.startsWith("application/octet-stream")) {
+                findings.add("نوع MIME المعلن لا يتوافق بوضوح مع صيغة الصوت المكتشفة.")
+            }
+            if (ext == "pdf" && kind != "PDF") findings.add("الامتداد PDF لكن توقيع الملف لا يطابق ترويسة PDF المعتادة.")
+            if (ext in setOf("mp4","m4v","mov","avi","mkv","webm") && !isVideo) findings.add("الامتداد يوحي بفيديو لكن الترويسة لا تطابق حاوية فيديو معروفة.")
+            if (ext in setOf("mp3","wav","ogg","oga","flac","m4a","aac") && !isAudio && kind != "ISO-BMFF") {
+                findings.add("الامتداد يوحي بملف صوتي لكن الترويسة لا تطابق صيغة صوت معروفة.")
+            }
 
             // Static, non-executing inspection for Python source files.
             // These patterns are warning indicators only and can produce false positives.
@@ -211,7 +282,14 @@ class MainActivity : Activity() {
             val advice = if (findings.isEmpty() && !pythonHasIndicators) "لم نعثر على علامة مريبة من الاختبارات المحدودة. هذا لا يعني أن الملف خالٍ من الفيروسات."
                 else if (pythonHasIndicators) "تم العثور على مؤشرات في محتوى Python تستحق المراجعة. لا تشغّل الملف قبل فهم هذه الأجزاء والتحقق من مصدره؛ المؤشرات ليست دليلاً قاطعاً على وجود فيروس."
                 else "ظهرت مؤشرات في نوع الملف أو امتداده. لا تفتحه إذا لم تكن تثق بمصدره، واستخدم حماية موثوقة ومحدّثة."
-            val report = "نتيجة فحص الملف\nالاسم: $displayName\nالنوع المعلن: $mime\nالترويسة المقروءة: $kind\nالحجم: ${bytes.size} بايت\nSHA-256: $digest\n\n$summary\n\n$pythonAnalysis\n\nالنصيحة: $advice\n\nملاحظة: فحص محلي أولي للنوع والامتداد وبعض الأنماط النصية فقط؛ لا يشغّل الملف ولا يفحصه بمحرك مضاد فيروسات، وقد يفوّت التهديدات أو يعطي تحذيرات غير دقيقة."
+            val formatAnalysis = when {
+                isImage -> "تحليل الصورة: تم فحص التوقيع وبعض علامات نهاية الملف بحثاً عن بيانات ملحقة."
+                kind == "PDF" -> "تحليل PDF: تم البحث عن مؤشرات JavaScript والإجراءات التلقائية والمرفقات والبيانات بعد EOF."
+                isVideo -> "تحليل الفيديو: تم تحديد حاوية الوسائط من الترويسة ومقارنتها بالامتداد ونوع MIME."
+                isAudio -> "تحليل الصوت: تم تحديد صيغة الصوت من الترويسة ومقارنتها بالامتداد ونوع MIME."
+                else -> "تحليل الوسائط: لم تُعرف صيغة صورة أو PDF أو فيديو أو صوت مدعومة."
+            }
+            val report = "نتيجة فحص الملف\nالاسم: $displayName\nالنوع المعلن: $mime\nالترويسة المقروءة: $kind\nالحجم: \${bytes.size} بايت\nSHA-256: $digest\n\n$formatAnalysis\n\n$summary\n\n$pythonAnalysis\n\nالنصيحة: $advice\n\nملاحظة: فحص محلي أولي لا يشغّل الملف ولا يرفعه. التحليل البنيوي والمؤشرات النصية لا تعادل محرك مضاد فيروسات، وقد تفوّت التهديدات أو تعطي تحذيرات غير دقيقة."
             result.text = report
             saveReport("ملف: $displayName", report)
         } catch (e: Exception) {
