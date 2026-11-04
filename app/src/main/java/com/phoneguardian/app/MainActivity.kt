@@ -122,11 +122,9 @@ class MainActivity : Activity() {
                 ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "ملف غير معروف"
             val mime = contentResolver.getType(uri)?.lowercase(Locale.ROOT) ?: "غير معروف"
             val bytes = contentResolver.openInputStream(uri)?.use { input ->
-                val out = java.io.ByteArrayOutputStream(); val buffer = ByteArray(8192); var total = 0
+                val out = java.io.ByteArrayOutputStream(); val buffer = ByteArray(8192)
                 while (true) {
                     val n = input.read(buffer); if (n < 0) break
-                    total += n
-                    if (total > 25 * 1024 * 1024) throw IllegalArgumentException("حجم الملف أكبر من 25 ميغابايت.")
                     out.write(buffer, 0, n)
                 }
                 out.toByteArray()
@@ -135,6 +133,7 @@ class MainActivity : Activity() {
             val lowerName = displayName.lowercase(Locale.ROOT)
             val ext = lowerName.substringAfterLast('.', "")
             val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            val fileSizeText = String.format(Locale.ROOT, "%,d بايت (%.2f MB)", bytes.size, bytes.size / (1024.0 * 1024.0))
             fun has(vararg v: Int): Boolean = bytes.size >= v.size && v.indices.all { (bytes[it].toInt() and 255) == v[it] }
             val kind = when {
                 has(0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a) -> "PNG"
@@ -289,7 +288,7 @@ class MainActivity : Activity() {
                 isAudio -> "تحليل الصوت: تم تحديد صيغة الصوت من الترويسة ومقارنتها بالامتداد ونوع MIME."
                 else -> "تحليل الوسائط: لم تُعرف صيغة صورة أو PDF أو فيديو أو صوت مدعومة."
             }
-            val report = "نتيجة فحص الملف\nالاسم: $displayName\nالنوع المعلن: $mime\nالترويسة المقروءة: $kind\nالحجم: \${bytes.size} بايت\nSHA-256: $digest\n\n$formatAnalysis\n\n$summary\n\n$pythonAnalysis\n\nالنصيحة: $advice\n\nملاحظة: فحص محلي أولي لا يشغّل الملف ولا يرفعه. التحليل البنيوي والمؤشرات النصية لا تعادل محرك مضاد فيروسات، وقد تفوّت التهديدات أو تعطي تحذيرات غير دقيقة."
+            val report = "نتيجة فحص الملف\nالاسم: $displayName\nالنوع المعلن: $mime\nالترويسة المقروءة: $kind\nالحجم: $fileSizeText\nSHA-256: $digest\n\n$formatAnalysis\n\n$summary\n\n$pythonAnalysis\n\nالنصيحة: $advice\n\nملاحظة: فحص محلي أولي لا يشغّل الملف ولا يرفعه. التحليل البنيوي والمؤشرات النصية لا تعادل محرك مضاد فيروسات، وقد تفوّت التهديدات أو تعطي تحذيرات غير دقيقة."
             result.text = report
             saveReport("ملف: $displayName", report)
         } catch (e: Exception) {
