@@ -177,9 +177,9 @@ class MainActivity : Activity() {
             ) {
                 findings.add("اسم الملف يحتوي امتداداً مزدوجاً أو مخادعاً قد يخفي ملفاً قابلاً للتنفيذ.")
             }
-            val isImage = kind in setOf("PNG","JPEG","GIF","WEBP")
-            val isVideo = kind in setOf("AVI","ISO-BMFF","Matroska/WebM")
-            val isAudio = kind in setOf("WAV","MP3","OGG","FLAC")
+            val isImage = kind in setOf("PNG","JPEG","GIF","WEBP") || (kind == "ISO-BMFF" && ext in setOf("heic","heif"))
+            val isVideo = kind in setOf("AVI","Matroska/WebM") || (kind == "ISO-BMFF" && ext in setOf("mp4","m4v","mov"))
+            val isAudio = kind in setOf("WAV","MP3","OGG","FLAC") || (kind == "ISO-BMFF" && ext in setOf("m4a","aac"))
             if (ext in imageExt && !isImage) findings.add("الامتداد يوحي بأنها صورة لكن ترويسة المحتوى لا تطابق صورة معروفة.")
             if (isImage && !mime.startsWith("image/") && mime != "غير معروف") findings.add("نوع MIME المعلن لا يتوافق بوضوح مع ترويسة الصورة.")
 
@@ -226,7 +226,7 @@ class MainActivity : Activity() {
             }
 
             val mediaExtensions = mapOf(
-                "AVI" to setOf("avi"), "ISO-BMFF" to setOf("mp4","m4v","mov","heic","heif"),
+                "AVI" to setOf("avi"), "ISO-BMFF" to setOf("mp4","m4v","mov","heic","heif","m4a","aac"),
                 "Matroska/WebM" to setOf("mkv","webm"), "WAV" to setOf("wav"),
                 "MP3" to setOf("mp3"), "MP3/ MPEG audio" to setOf("mp3","mp2"),
                 "OGG" to setOf("ogg","oga","ogv"), "FLAC" to setOf("flac")
