@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.provider.OpenableColumns
 import java.security.MessageDigest
+import java.util.zip.CRC32
 import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
@@ -187,57 +188,188 @@ class MainActivity : Activity() {
                     val value = bytes[it].toInt() and 255
                     value != 0 && value != 9 && value != 10 && value != 13 && value != 32
                 }
+            fun readU32BE(pos: Int): Long =
+                ((bytes[pos].toLong() and 255L) shl 24) or
+                    ((bytes[pos + 1].toLong() and 255L) shl 16) or
+                    ((bytes[pos + 2].toLong() and 255L) shl 8) or
+                    (bytes[pos + 3].toLong() and 255L)
+
+            fun readU32LE(pos: Int): Long =
+                (bytes[pos].toLong() and 255L) or
+                    ((bytes[pos + 1].toLong() and 255L) shl 8) or
+                    ((bytes[pos + 2].toLong() and 255L) shl 16) or
+                    ((bytes[pos + 3].toLong() and 255L) shl 24)
+
             if (kind == "JPEG") {
                 var end = -1
                 for (i in 0 until bytes.size - 1) {
                     if ((bytes[i].toInt() and 255) == 0xff && (bytes[i + 1].toInt() and 255) == 0xd9) end = i + 2
                 }
-                if (end >= 0 && hasNonPaddingTail(end)) findings.add("توجد بيانات غير فارغة بعد علامة نهاية JPEG؛ قد تكون بيانات ملحقة، وهذا ليس دليلاً وحده على البرمجيات الخبيثة.")
+                if (end < 0) {
+                    findings.add("لم يُعثر على علامة نهاية JPEG (FFD9)؛ قد تكون الصورة مبتورة.")
+                } else if (hasNonPaddingTail(end)) {
+                    findings.add("توجد بيانات غير فارغة بعد علامة نهاية JPEG؛ قد تكون بيانات ملحقة، وهذا ليس دليلاً وحده على البرمجيات الخبيثة.")
+                }
             } else if (kind == "PNG") {
-                // Walk PNG chunks from the header; do not mistake the word IEND
-                // inside compressed image data for the real end marker.
                 var offset = 8
-                var pngEnded = false
-                var pngMalformed = false
-                while (offset + 12 <= bytes.size) {
-                    val chunkLength = ((bytes[offset].toLong() and 255L) shl 24) or
-                        ((bytes[offset + 1].toLong() and 255L) shl 16) or
-                        ((bytes[offset + 2].toLong() and 255L) shl 8) or
-                        (bytes[offset + 3].toLong() and 255L)
+                var sawIhdr = false
+                var sawIdat = false
+                var idatEnded = false
+                var sawIend = false
+                var malformed = false
+                var badCrcCount = 0
+
+                while (offset < bytes.size) {
+                    if (bytes.size - offset < 12) {
+                        malformed = true
+                        break
+                    }
+
+                    val chunkLength = readU32BE(offset)
                     if (chunkLength > Int.MAX_VALUE.toLong() ||
                         chunkLength > bytes.size.toLong() - offset.toLong() - 12L) {
-                        pngMalformed = true
+                        malformed = true
                         break
                     }
+
+                    val length = chunkLength.toInt()
                     val chunkType = String(bytes, offset + 4, 4, Charsets.US_ASCII)
-                    offset += 12 + chunkLength.toInt()
+                    val validType = chunkType.all { it in 'A'..'Z' || it in 'a'..'z' } &&
+                        chunkType[2] in 'A'..'Z'
+                    if (!validType) {
+                        findings.add("تحتوي PNG على اسم كتلة غير صالح.")
+                        malformed = true
+                    }
+
+                    if (!sawIhdr && chunkType != "IHDR") {
+                        findings.add("كتلة IHDR ليست أول كتلة في PNG كما تتطلب الصيغة.")
+                        malformed = true
+                    }
+
+                    if (chunkType == "IHDR") {
+                        if (sawIhdr || offset != 8 || length != 13) {
+                            findings.add("كتلة IHDR مكررة أو بطول غير صحيح.")
+                            malformed = true
+                        }
+                        sawIhdr = true
+                    }
+
+                    if (chunkType == "IDAT") {
+                        if (idatEnded) {
+                            findings.add("كتل IDAT في PNG غير متتابعة كما تتطلب الصيغة.")
+                            malformed = true
+                        }
+                        sawIdat = true
+                    } else if (sawIdat && chunkType != "IEND") {
+                        idatEnded = true
+                    }
+
+                    val crc = CRC32()
+                    crc.update(bytes, offset + 4, 4 + length)
+                    val expectedCrc = readU32BE(offset + 8 + length)
+                    if (crc.value != expectedCrc) badCrcCount++
+
+                    val critical = chunkType.firstOrNull()?.let { it in 'A'..'Z' } == true
+                    if (critical && chunkType !in setOf("IHDR", "PLTE", "IDAT", "IEND")) {
+                        findings.add("تحتوي PNG على كتلة حرجة غير معروفة ($chunkType)؛ قد لا تدعمها بعض قارئات الصور.")
+                    }
+
+                    offset += 12 + length
                     if (chunkType == "IEND") {
-                        if (chunkLength != 0L) pngMalformed = true
-                        pngEnded = true
+                        if (length != 0) {
+                            findings.add("كتلة IEND في PNG يجب أن تكون بطول صفر.")
+                            malformed = true
+                        }
+                        sawIend = true
                         break
                     }
                 }
-                if (!pngEnded) {
-                    findings.add("بنية PNG غير مكتملة أو لا تحتوي على كتلة نهاية IEND في الموضع المتوقع.")
-                } else {
-                    if (pngMalformed) findings.add("بنية PNG تحتوي على طول كتلة غير صالح أو غير مكتمل.")
-                    if (hasNonPaddingTail(offset)) findings.add("توجد بيانات غير فارغة بعد نهاية بنية PNG؛ تستحق المراجعة، ولا تثبت وحدها وجود برمجية خبيثة.")
+
+                if (!sawIhdr) findings.add("كتلة IHDR الأساسية غير موجودة في PNG.")
+                if (!sawIdat) findings.add("كتلة بيانات الصورة IDAT غير موجودة في PNG.")
+                if (!sawIend) findings.add("بنية PNG غير مكتملة أو لا تحتوي على كتلة نهاية IEND.")
+                if (malformed) findings.add("بنية كتل PNG تحتوي على ترتيب أو طول غير صالح.")
+                if (badCrcCount > 0) {
+                    findings.add("فشل التحقق من CRC لعدد $badCrcCount من كتل PNG؛ قد يكون الملف تالفاً أو معدلاً.")
+                }
+                if (sawIend && hasNonPaddingTail(offset)) {
+                    findings.add("توجد بيانات غير فارغة بعد نهاية بنية PNG؛ تستحق المراجعة، ولا تثبت وحدها وجود برمجية خبيثة.")
                 }
             } else if (kind == "WEBP") {
-                // RIFF stores the declared payload length as a little-endian 32-bit value.
-                val riffLength = (bytes[4].toLong() and 255L) or
-                    ((bytes[5].toLong() and 255L) shl 8) or
-                    ((bytes[6].toLong() and 255L) shl 16) or
-                    ((bytes[7].toLong() and 255L) shl 24)
+                val riffLength = readU32LE(4)
                 val declaredEnd = 8L + riffLength
-                if (declaredEnd < 12L || declaredEnd > bytes.size.toLong()) {
+                if (riffLength < 4L || declaredEnd > bytes.size.toLong()) {
                     findings.add("حجم RIFF المعلن داخل WebP لا يتوافق مع حجم الملف؛ قد يكون الملف مبتوراً أو بنيته غير سليمة.")
-                } else if (declaredEnd < bytes.size.toLong() && hasNonPaddingTail(declaredEnd.toInt())) {
-                    findings.add("توجد بيانات غير فارغة بعد نهاية RIFF المعلنة في WebP؛ تستحق المراجعة ولا تثبت وحدها وجود برمجية خبيثة.")
+                } else {
+                    var offset = 12L
+                    var chunkCount = 0
+                    var imageChunkCount = 0
+                    var malformed = false
+
+                    while (offset < declaredEnd) {
+                        if (declaredEnd - offset < 8L) {
+                            malformed = true
+                            break
+                        }
+
+                        val pos = offset.toInt()
+                        val chunkType = String(bytes, pos, 4, Charsets.US_ASCII)
+                        val chunkLength = readU32LE(pos + 4)
+                        val dataEnd = offset + 8L + chunkLength
+                        val paddedEnd = dataEnd + (chunkLength and 1L)
+                        if (dataEnd < offset || paddedEnd > declaredEnd) {
+                            malformed = true
+                            break
+                        }
+
+                        if (chunkCount == 0 && chunkType !in setOf("VP8X", "VP8 ", "VP8L")) {
+                            findings.add("أول كتلة في WebP ليست كتلة صورة أو ترويسة امتداد معروفة.")
+                        }
+
+                        when (chunkType) {
+                            "VP8X" -> if (chunkLength != 10L) {
+                                findings.add("طول كتلة VP8X في WebP غير صحيح.")
+                                malformed = true
+                            }
+                            "VP8 " -> {
+                                imageChunkCount++
+                                if (chunkLength < 10L) malformed = true
+                            }
+                            "VP8L" -> {
+                                imageChunkCount++
+                                if (chunkLength < 5L) malformed = true
+                                else if ((bytes[pos + 8].toInt() and 255) != 0x2f) {
+                                    findings.add("توقيع بيانات VP8L داخل WebP غير صحيح.")
+                                    malformed = true
+                                }
+                            }
+                        }
+
+                        chunkCount++
+                        offset = paddedEnd
+                    }
+
+                    if (offset != declaredEnd) malformed = true
+                    if (chunkCount == 0) malformed = true
+                    if (imageChunkCount == 0) {
+                        findings.add("لم يُعثر على كتلة بيانات صورة VP8 أو VP8L داخل WebP.")
+                    } else if (imageChunkCount > 1) {
+                        findings.add("تحتوي WebP على أكثر من كتلة بيانات صورة رئيسية؛ يلزم التحقق من بنيتها.")
+                    }
+                    if (malformed) {
+                        findings.add("بنية كتل WebP/RIFF تحتوي على طول أو ترتيب غير صالح.")
+                    }
+                    if (declaredEnd < bytes.size.toLong() && hasNonPaddingTail(declaredEnd.toInt())) {
+                        findings.add("توجد بيانات غير فارغة بعد نهاية RIFF المعلنة في WebP؛ تستحق المراجعة ولا تثبت وحدها وجود برمجية خبيثة.")
+                    }
                 }
             } else if (kind == "GIF") {
                 val end = bytes.indexOf(0x3b.toByte()) + 1
-                if (end > 0 && hasNonPaddingTail(end)) findings.add("توجد بيانات غير فارغة بعد علامة نهاية GIF؛ تستحق المراجعة.")
+                if (end <= 0) {
+                    findings.add("لم يُعثر على علامة نهاية GIF؛ قد تكون الصورة مبتورة.")
+                } else if (hasNonPaddingTail(end)) {
+                    findings.add("توجد بيانات غير فارغة بعد علامة نهاية GIF؛ تستحق المراجعة.")
+                }
             }
 
             if (kind == "PDF") {
@@ -316,7 +448,7 @@ class MainActivity : Activity() {
                 else if (pythonHasIndicators) "تم العثور على مؤشرات في محتوى Python تستحق المراجعة. لا تشغّل الملف قبل فهم هذه الأجزاء والتحقق من مصدره؛ المؤشرات ليست دليلاً قاطعاً على وجود فيروس."
                 else "ظهرت مؤشرات في نوع الملف أو امتداده. لا تفتحه إذا لم تكن تثق بمصدره، واستخدم حماية موثوقة ومحدّثة."
             val formatAnalysis = when {
-                isImage -> "تحليل الصورة: تم فحص التوقيع وبعض علامات نهاية الملف بحثاً عن بيانات ملحقة."
+                isImage -> "تحليل الصورة: تم فحص التوقيع وبنية كتل PNG/ WebP وعلامات نهاية JPEG/ GIF، مع التحقق من CRC في PNG."
                 kind == "PDF" -> "تحليل PDF: تم البحث عن مؤشرات JavaScript والإجراءات التلقائية والمرفقات والبيانات بعد EOF."
                 isVideo -> "تحليل الفيديو: تم تحديد حاوية الوسائط من الترويسة ومقارنتها بالامتداد ونوع MIME."
                 isAudio -> "تحليل الصوت: تم تحديد صيغة الصوت من الترويسة ومقارنتها بالامتداد ونوع MIME."
