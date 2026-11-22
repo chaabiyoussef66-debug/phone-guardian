@@ -39,3 +39,8 @@ Release signing verification run.
 
 
 Build validation for v1.17.
+
+## v1.27 (development)
+- Expanded offline URL analysis for browser-interpretation tricks, encoded host authorities, bidirectional text controls, DNS hostname validity, nested redirect destinations, double encoding, and misleading fragments.
+- URL reports explicitly state that no site is opened, redirects are not followed, and no live reputation database is queried.
+- Heuristic scores remain advisory and are not a safety guarantee.
