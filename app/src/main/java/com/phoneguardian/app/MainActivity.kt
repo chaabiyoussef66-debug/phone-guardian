@@ -969,6 +969,40 @@ class MainActivity : Activity() {
                 findings.add(3 to "نوع الاتصال غير معتاد لهذا الفاحص؛ لا تتابع إلا إذا كنت تعرف سبب استخدامه.")
             }
 
+            // Browser-interpretation traps: never normalize these silently.
+            if (raw.contains('\\\\')) {
+                findings.add(3 to "الرابط يحتوي شرطة مائلة عكسية قد تغيّر طريقة تفسير العنوان بين التطبيقات والمتصفحات.")
+            }
+            val authorityRaw = parsed.rawAuthority ?: ""
+            if (authorityRaw.contains('%')) {
+                findings.add(4 to "جزء اسم الموقع يحتوي ترميزاً مئوياً؛ قد يخفي أحرفاً أو يسبب اختلاف تفسير العنوان.")
+            }
+            val hasBidiControls = raw.any { ch ->
+                ch.code in 0x202A..0x202E || ch.code in 0x2066..0x2069 ||
+                    ch.code == 0x200E || ch.code == 0x200F
+            }
+            if (hasBidiControls) {
+                findings.add(4 to "الرابط يحتوي محارف اتجاه كتابة خفية قد تقلب ترتيب الأحرف بصرياً.")
+            }
+            if (host.length > 253) {
+                findings.add(3 to "اسم المضيف أطول من الحد المعتاد لأسماء DNS.")
+            }
+            if (!host.contains(":") && ipv4Parts(host) == null) {
+                val asciiHost = runCatching {
+                    java.net.IDN.toASCII(host, java.net.IDN.USE_STD3_ASCII_RULES)
+                }.getOrNull()
+                val validDns = asciiHost != null && asciiHost.length <= 253 &&
+                    asciiHost.split('.').all { label ->
+                        label.isNotEmpty() && label.length <= 63 &&
+                            label.firstOrNull()?.let { it.isLetterOrDigit() } == true &&
+                            label.lastOrNull()?.let { it.isLetterOrDigit() } == true &&
+                            label.all { it.isLetterOrDigit() || it == '-' }
+                    }
+                if (!validDns) {
+                    findings.add(4 to "اسم المضيف لا يطابق قواعد أسماء DNS المعتادة؛ قد يكون مكتوباً بصيغة مضللة أو غير صالحة.")
+                }
+            }
+
             if (host.startsWith("xn--") || host.split(".").any { it.startsWith("xn--") }) {
                 findings.add(2 to "اسم النطاق يستخدم ترميز IDN؛ افحص تهجئة الموقع بعناية لاحتمال تشابه الحروف.")
             }
@@ -1050,6 +1084,34 @@ class MainActivity : Activity() {
                 findings.add(1 to "الرابط يحتوي معامل تحويل إلى وجهة أخرى؛ تأكد من الموقع الذي سيُفتح قبل المتابعة.")
             }
 
+            // Inspect redirect parameter values without following or contacting them.
+            val redirectTargets = (parsed.rawQuery ?: "").split("&").mapNotNull { part ->
+                val key = runCatching {
+                    URLDecoder.decode(part.substringBefore("="), "UTF-8").lowercase(Locale.ROOT)
+                }.getOrDefault("")
+                if (key !in redirectKeys || !part.contains("=")) return@mapNotNull null
+                val value = runCatching {
+                    URLDecoder.decode(part.substringAfter("="), "UTF-8")
+                }.getOrDefault(part.substringAfter("="))
+                val candidate = value.trim()
+                if (candidate.startsWith("http://", true) || candidate.startsWith("https://", true)) {
+                    runCatching { URI(candidate).host?.lowercase(Locale.ROOT) }.getOrNull()
+                } else null
+            }.filterNotNull().distinct()
+            if (redirectTargets.any { it != host }) {
+                findings.add(3 to "قيمة أحد معاملات التحويل تشير إلى مضيف آخر غير المضيف الظاهر؛ لا يمكن معرفة الوجهة النهائية دون فحص تحويل آمن.")
+            }
+            if (redirectTargets.size > 1) {
+                findings.add(1 to "الرابط يحتوي أكثر من وجهة تحويل محتملة؛ راجع العنوان كاملاً قبل المتابعة.")
+            }
+            if (Regex("(?i)%25(?:2f|3a|40|2e)").containsMatchIn(raw)) {
+                findings.add(2 to "الرابط يحتوي ترميزاً مئوياً مزدوجاً قد يخفي فواصل أو رموزاً مهمة عند فك الترميز.")
+            }
+            val fragment = parsed.rawFragment.orEmpty()
+            if (fragment.contains("http://", true) || fragment.contains("https://", true)) {
+                findings.add(1 to "جزء fragment يعرض عنواناً آخر؛ النص بعد # لا يغيّر المضيف الفعلي.")
+            }
+
             val suspiciousTlds = setOf("zip", "mov", "top", "click", "work", "country", "gq", "tk")
             if (host.substringAfterLast('.', "") in suspiciousTlds) {
                 findings.add(1 to "امتداد النطاق يستحق تحققاً إضافياً؛ الامتداد وحده لا يثبت أن الموقع ضار.")
@@ -1101,7 +1163,7 @@ class MainActivity : Activity() {
                 score >= 2 -> "النصيحة: تحقق من اسم النطاق والمرسل، ولا تدخل بيانات حساسة."
                 else -> "النصيحة: تأكد دائماً من عنوان الموقع والمرسل قبل إدخال أي معلومات."
             }
-            val report = "مستوى التنبيه: $level ($score/10)\n\n$details\n\n$advice\n\nملاحظة: هذا تقييم تقريبي يعتمد على شكل الرابط فقط؛ لا يفحص محتوى الموقع ولا يضمن اكتشاف كل عمليات التصيد."
+            val report = "مستوى التنبيه: $level ($score/10)\n\n$details\n\n$advice\n\nملاحظة: هذا تقييم إرشادي لشكل الرابط فقط. لا يفتح الموقع، ولا يتبع التحويلات، ولا يستعلم عن قواعد بيانات السمعة؛ لذلك لا يثبت أن الموقع آمن ولا يضمن اكتشاف كل عمليات التصيد."
             result.text = report
             saveReport(raw, report)
         }
