@@ -144,17 +144,38 @@ class MainActivity : Activity() {
             val mime = contentResolver.getType(uri)?.lowercase(Locale.ROOT) ?: "غير معروف"
             selectedMime = mime
             val bytes = contentResolver.openInputStream(uri)?.use { input ->
-                val out = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(8192)
-                while (true) {
-                    val n = input.read(buffer)
-                    if (n < 0) break
-                    if (out.size().toLong() + n.toLong() > maxScanBytes) {
-                        throw IllegalStateException("تجاوز الملف حد الفحص المحلي (64 ميغابايت). أوقف الفحص لحماية ذاكرة الهاتف.")
+                if (reportedSize >= 0L) {
+                    if (reportedSize > maxScanBytes) {
+                        throw IllegalStateException("حجم الملف يتجاوز حد الفحص المحلي (64 ميغابايت).")
                     }
-                    out.write(buffer, 0, n)
+                    // Allocate once when the document provider supplies a trustworthy size.
+                    // This avoids ByteArrayOutputStream.toByteArray() duplicating the whole file in memory.
+                    val expectedSize = reportedSize.toInt()
+                    val data = ByteArray(expectedSize)
+                    var offset = 0
+                    while (offset < expectedSize) {
+                        val n = input.read(data, offset, expectedSize - offset)
+                        if (n < 0) break
+                        offset += n
+                    }
+                    if (offset == expectedSize && input.read() != -1) {
+                        throw IllegalStateException("حجم المحتوى أكبر من الحجم المعلن؛ أوقف الفحص لحماية ذاكرة الهاتف.")
+                    }
+                    if (offset == expectedSize) data else data.copyOf(offset)
+                } else {
+                    // Unknown-size providers are read incrementally and stopped at the hard limit.
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        if (out.size().toLong() + n.toLong() > maxScanBytes) {
+                            throw IllegalStateException("تجاوز الملف حد الفحص المحلي (64 ميغابايت). أوقف الفحص لحماية ذاكرة الهاتف.")
+                        }
+                        out.write(buffer, 0, n)
+                    }
+                    out.toByteArray()
                 }
-                out.toByteArray()
             } ?: throw IllegalStateException("تعذرت قراءة الملف.")
             val findings = mutableListOf<String>()
             val lowerName = displayName.lowercase(Locale.ROOT)
