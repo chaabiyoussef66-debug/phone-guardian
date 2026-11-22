@@ -120,20 +120,40 @@ class MainActivity : Activity() {
         val result = paragraph("جارٍ قراءة الملف وفحص مؤشرات نوعه...")
         content.addView(result)
         try {
-            val displayName = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "ملف غير معروف"
+            val metadata = contentResolver.query(
+                uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null
+            )?.use { c ->
+                if (c.moveToFirst()) {
+                    val name = c.getString(0)
+                    val size = if (c.isNull(1)) -1L else c.getLong(1)
+                    name to size
+                } else null
+            }
+            val displayName = metadata?.first ?: "ملف غير معروف"
+            val reportedSize = metadata?.second ?: -1L
+            val maxScanBytes = 64L * 1024L * 1024L
+            if (reportedSize > maxScanBytes) {
+                throw IllegalStateException("حجم الملف يتجاوز حد الفحص المحلي (64 ميغابايت). لم يتم تحميله إلى الذاكرة أو تشغيله.")
+            }
             val mime = contentResolver.getType(uri)?.lowercase(Locale.ROOT) ?: "غير معروف"
             val bytes = contentResolver.openInputStream(uri)?.use { input ->
-                val out = java.io.ByteArrayOutputStream(); val buffer = ByteArray(8192)
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
                 while (true) {
-                    val n = input.read(buffer); if (n < 0) break
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    if (out.size().toLong() + n.toLong() > maxScanBytes) {
+                        throw IllegalStateException("تجاوز الملف حد الفحص المحلي (64 ميغابايت). أوقف الفحص لحماية ذاكرة الهاتف.")
+                    }
                     out.write(buffer, 0, n)
                 }
                 out.toByteArray()
             } ?: throw IllegalStateException("تعذرت قراءة الملف.")
             val findings = mutableListOf<String>()
             val lowerName = displayName.lowercase(Locale.ROOT)
-            val ext = lowerName.substringAfterLast('.', "")
+            // Ignore trailing dots/spaces when determining the effective extension.
+            val normalizedName = lowerName.trimEnd(' ', '.')
+            val ext = normalizedName.substringAfterLast('.', "")
             val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
             val fileSizeText = String.format(Locale.ROOT, "%,d بايت (%.2f MB)", bytes.size, bytes.size / (1024.0 * 1024.0))
             fun has(vararg v: Int): Boolean = bytes.size >= v.size && v.indices.all { (bytes[it].toInt() and 255) == v[it] }
@@ -153,7 +173,7 @@ class MainActivity : Activity() {
                 has(0x25,0x50,0x44,0x46) -> "PDF"
                 has(0x4d,0x5a) -> "ملف تنفيذي Windows (MZ/PE محتمل)"
                 has(0x7f,0x45,0x4c,0x46) -> "ملف تنفيذي Linux/Android (ELF)"
-                has(0x50,0x4b,0x03,0x04) -> "أرشيف ZIP (قد يحتوي APK أو ملفات أخرى)"
+                has(0x50,0x4b,0x03,0x04) || has(0x50,0x4b,0x05,0x06) || has(0x50,0x4b,0x07,0x08) -> "أرشيف ZIP (قد يحتوي APK أو ملفات أخرى)"
                 has(0x64,0x65,0x78,0x0a) -> "ملف DEX/Android"
                 else -> "نوع غير محدد من الترويسة"
             }
@@ -371,6 +391,42 @@ class MainActivity : Activity() {
                 } else if (hasNonPaddingTail(end)) {
                     findings.add("توجد بيانات غير فارغة بعد علامة نهاية GIF؛ تستحق المراجعة.")
                 }
+            }
+
+            val isZipArchive = kind.startsWith("أرشيف ZIP")
+            val isWindowsExecutable = kind.startsWith("ملف تنفيذي Windows")
+            val isNativeExecutable = kind.startsWith("ملف تنفيذي Linux")
+            val isDexExecutable = kind.startsWith("ملف DEX")
+            val isExecutableContent = isWindowsExecutable || isNativeExecutable || isDexExecutable
+
+            // A harmless-looking extension must not hide a recognizable executable signature.
+            val harmlessLookingExt = setOf(
+                "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif",
+                "pdf", "txt", "rtf", "csv", "mp3", "mp4", "avi", "mov",
+                "doc", "docx", "xls", "xlsx", "ppt", "pptx"
+            )
+            if (isExecutableContent && ext in harmlessLookingExt) {
+                findings.add("محتوى الملف يحمل توقيعاً تنفيذياً (Windows/ELF/DEX) رغم أن امتداده يبدو صورة أو مستنداً أو وسائط؛ لا تفتحه.")
+            }
+
+            // Verify common executable/container extensions against their leading signatures.
+            if (ext in setOf("exe", "dll", "scr", "com", "cpl", "pif") && !isWindowsExecutable) {
+                findings.add("الامتداد يوحي بملف تنفيذي Windows لكن توقيع MZ/PE غير موجود؛ قد يكون الملف مزيفاً أو غير مكتمل.")
+            }
+            if (ext == "dex" && !isDexExecutable) {
+                findings.add("الامتداد DEX لكن توقيع ملف Android DEX غير موجود.")
+            }
+            if (ext in setOf("apk", "jar", "zip", "rar", "7z") && !isZipArchive &&
+                ext in setOf("apk", "jar", "zip")) {
+                findings.add("الامتداد يوحي بأرشيف ZIP أو حزمة APK/JAR لكن توقيع ZIP المعتاد غير موجود.")
+            }
+            if (ext in setOf("apk", "jar") && isZipArchive) {
+                findings.add("تم التعرف على حاوية ZIP فقط؛ هذا لا يثبت أن APK أو JAR صالح أو آمن.")
+            }
+
+            // Unicode bidirectional overrides can make the visible filename misleading.
+            if (displayName.any { it.code in setOf(0x202A, 0x202B, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069) }) {
+                findings.add("اسم الملف يحتوي محارف تحكم باتجاه الكتابة قد تخفي الامتداد الحقيقي بصرياً؛ تحقق من الاسم الكامل.")
             }
 
             if (kind == "PDF") {
