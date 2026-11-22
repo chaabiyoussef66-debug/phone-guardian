@@ -90,6 +90,7 @@ class MainActivity : Activity() {
         content.addView(paragraph("حماية هاتفك تبدأ بمعرفة التطبيقات والإعدادات المهمة. هذه نسخة تطويرية بأدوات محلية ولا تحتاج إلى Root أو Shizuku."))
         actionButton("📱 معلومات الهاتف") { showDeviceInfo() }
         actionButton("📦 التطبيقات الظاهرة في القائمة") { showApps() }
+        actionButton("🔐 مراقبة أذونات التطبيقات") { showPermissionAudit() }
         actionButton("🔐 إعدادات أمان Android") {
             startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
         }
@@ -510,6 +511,138 @@ class MainActivity : Activity() {
             content.addView(row)
         }
         content.addView(paragraph("اضغط على اسم أي تطبيق لفتح صفحة معلوماته وأذوناته في إعدادات Android."))
+        actionButton("رجوع") { showHome() }
+    }
+
+
+    @Suppress("DEPRECATION")
+    private fun showPermissionAudit() {
+        content = baseLayout()
+        content.addView(title("🔐 مراقبة أذونات التطبيقات"))
+        content.addView(paragraph(
+            "يفحص هذا القسم الأذونات الخطيرة التي يعلن التطبيق أنه يحتاجها، ويبيّن هل مُنحت له حالياً أم لا. " +
+            "طلب الإذن لا يعني أن التطبيق خبيث؛ راجع هل الصلاحية منطقية بالنسبة لوظيفة التطبيق."
+        ))
+
+        val launcherIntent = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = packageManager.queryIntentActivities(launcherIntent, 0)
+            .distinctBy { it.activityInfo.packageName }
+            .sortedBy { it.loadLabel(packageManager).toString().lowercase(Locale.ROOT) }
+
+        content.addView(paragraph("عدد التطبيقات الظاهرة التي سيجري فحصها: ${apps.size}. لا تشمل هذه القائمة بالضرورة كل تطبيقات النظام أو التطبيقات التي لا تملك أيقونة تشغيل."))
+
+        fun permissionLabel(permission: String): String = when (permission) {
+            "android.permission.CAMERA" -> "الكاميرا"
+            "android.permission.RECORD_AUDIO" -> "الميكروفون وتسجيل الصوت"
+            "android.permission.ACCESS_FINE_LOCATION" -> "الموقع الدقيق"
+            "android.permission.ACCESS_COARSE_LOCATION" -> "الموقع التقريبي"
+            "android.permission.ACCESS_BACKGROUND_LOCATION" -> "الموقع في الخلفية"
+            "android.permission.READ_CONTACTS" -> "قراءة جهات الاتصال"
+            "android.permission.WRITE_CONTACTS" -> "تعديل جهات الاتصال"
+            "android.permission.READ_CALENDAR" -> "قراءة التقويم"
+            "android.permission.WRITE_CALENDAR" -> "تعديل التقويم"
+            "android.permission.READ_CALL_LOG" -> "قراءة سجل المكالمات"
+            "android.permission.WRITE_CALL_LOG" -> "تعديل سجل المكالمات"
+            "android.permission.CALL_PHONE" -> "إجراء المكالمات"
+            "android.permission.READ_PHONE_STATE" -> "حالة الهاتف ومعرّفاته"
+            "android.permission.READ_SMS" -> "قراءة الرسائل SMS"
+            "android.permission.SEND_SMS" -> "إرسال الرسائل SMS"
+            "android.permission.RECEIVE_SMS" -> "استقبال الرسائل SMS"
+            "android.permission.RECEIVE_MMS" -> "استقبال رسائل MMS"
+            "android.permission.READ_EXTERNAL_STORAGE" -> "قراءة مساحة التخزين (الإصدارات الأقدم)"
+            "android.permission.WRITE_EXTERNAL_STORAGE" -> "تعديل مساحة التخزين (الإصدارات الأقدم)"
+            "android.permission.READ_MEDIA_IMAGES" -> "قراءة الصور"
+            "android.permission.READ_MEDIA_VIDEO" -> "قراءة الفيديو"
+            "android.permission.READ_MEDIA_AUDIO" -> "قراءة الملفات الصوتية"
+            "android.permission.READ_MEDIA_VISUAL_USER_SELECTED" -> "الوصول إلى الصور/الفيديو المختارة"
+            "android.permission.POST_NOTIFICATIONS" -> "إرسال الإشعارات"
+            "android.permission.BODY_SENSORS" -> "مستشعرات الجسم"
+            "android.permission.ACTIVITY_RECOGNITION" -> "التعرّف على النشاط البدني"
+            "android.permission.BLUETOOTH_CONNECT" -> "الاتصال بأجهزة Bluetooth"
+            "android.permission.NEARBY_WIFI_DEVICES" -> "الأجهزة القريبة عبر Wi-Fi"
+            else -> permission.substringAfterLast('.')
+        }
+
+        var scanned = 0
+        var appsWithSensitive = 0
+        for (item in apps) {
+            val packageName = item.activityInfo.packageName
+            val appName = item.loadLabel(packageManager).toString()
+            scanned++
+            val requested = try {
+                packageManager.getPackageInfo(packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+                    .requestedPermissions?.toList().orEmpty()
+            } catch (_: Exception) {
+                emptyList()
+            }
+            val sensitive = requested.distinct().mapNotNull { permission ->
+                try {
+                    val info = packageManager.getPermissionInfo(permission, 0)
+                    val baseProtection = info.protectionLevel and android.content.pm.PermissionInfo.PROTECTION_MASK_BASE
+                    if (baseProtection != android.content.pm.PermissionInfo.PROTECTION_DANGEROUS) null
+                    else permission to (packageManager.checkPermission(permission, packageName) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+            if (sensitive.isNotEmpty()) appsWithSensitive++
+            val grantedCount = sensitive.count { it.second }
+            val row = TextView(this).apply {
+                text = if (sensitive.isEmpty()) {
+                    "• $appName\n  لم يُعلن عن أذونات خطيرة ضمن القائمة المفحوصة"
+                } else {
+                    "• $appName\n  أذونات حساسة: ${sensitive.size} | ممنوحة حالياً: $grantedCount"
+                }
+                textSize = 15f
+                setTextColor(navy)
+                setPadding(12, 12, 12, 12)
+                setBackgroundColor(Color.WHITE)
+                isClickable = true
+                isFocusable = true
+            }
+            row.setOnClickListener {
+                val permissionDetails = if (sensitive.isEmpty()) {
+                    "لم يُعثر على أذونات من نوع Dangerous ضمن الأذونات المعلنة التي أمكن قراءتها. قد يطلب التطبيق أذونات أخرى عادية أو خاصة."
+                } else {
+                    sensitive.joinToString("\n") { (permission, granted) ->
+                        val state = if (granted) "ممنوحة حالياً" else "غير ممنوحة حالياً"
+                        "• ${permissionLabel(permission)} — $state"
+                    }
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle(appName)
+                    .setMessage("اسم الحزمة: $packageName\n\n$permissionDetails\n\nتنبيه: وجود الإذن في القائمة لا يثبت إساءة استخدامه. تحقق من حاجة التطبيق إليه ومن مصدره.")
+                    .setPositiveButton("فتح إعدادات التطبيق") { _, _ ->
+                        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                    }
+                    .setNegativeButton("إغلاق", null)
+                    .show()
+            }
+            content.addView(row, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8 })
+        }
+
+        content.addView(paragraph("اكتمل الفحص: $scanned تطبيق ظاهر، منها $appsWithSensitive تطبيق أعلن عن إذن حساس واحد أو أكثر. الأذونات غير الممنوحة قد يطلبها التطبيق لاحقاً."))
+
+        content.addView(title("صلاحيات الوصول الخاصة", 19f))
+        content.addView(paragraph("بعض الصلاحيات القوية لا تظهر كأذونات Dangerous عادية، مثل إمكانية الوصول والظهور فوق التطبيقات والوصول إلى الاستخدام. افتح إعدادات Android لمراجعتها يدوياً؛ لا يصنّفها هذا الفحص تلقائياً كتطبيقات ضارة."))
+        actionButton("فتح إعدادات إمكانية الوصول") {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        actionButton("فتح إعدادات الظهور فوق التطبيقات") {
+            runCatching { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)) }
+                .onFailure { Toast.makeText(this, "تعذر فتح هذه الصفحة على هذا الجهاز.", Toast.LENGTH_SHORT).show() }
+        }
+        actionButton("فتح إعدادات الوصول إلى الاستخدام") {
+            runCatching { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+                .onFailure { Toast.makeText(this, "تعذر فتح هذه الصفحة على هذا الجهاز.", Toast.LENGTH_SHORT).show() }
+        }
+        actionButton("فتح إعدادات مستمع الإشعارات") {
+            runCatching { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+                .onFailure { Toast.makeText(this, "تعذر فتح هذه الصفحة على هذا الجهاز.", Toast.LENGTH_SHORT).show() }
+        }
         actionButton("رجوع") { showHome() }
     }
 
