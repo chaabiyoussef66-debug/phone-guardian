@@ -119,6 +119,10 @@ class MainActivity : Activity() {
         content.addView(title("📁 فحص الملف"))
         val result = paragraph("جارٍ قراءة الملف وفحص مؤشرات نوعه...")
         content.addView(result)
+        var selectedName = "ملف غير معروف"
+        var selectedSize = -1L
+        var selectedMime = "غير معروف"
+        val scanTask = Thread({
         try {
             val metadata = contentResolver.query(
                 uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null
@@ -131,11 +135,14 @@ class MainActivity : Activity() {
             }
             val displayName = metadata?.first ?: "ملف غير معروف"
             val reportedSize = metadata?.second ?: -1L
+            selectedName = displayName
+            selectedSize = reportedSize
             val maxScanBytes = 64L * 1024L * 1024L
             if (reportedSize > maxScanBytes) {
                 throw IllegalStateException("حجم الملف يتجاوز حد الفحص المحلي (64 ميغابايت). لم يتم تحميله إلى الذاكرة أو تشغيله.")
             }
             val mime = contentResolver.getType(uri)?.lowercase(Locale.ROOT) ?: "غير معروف"
+            selectedMime = mime
             val bytes = contentResolver.openInputStream(uri)?.use { input ->
                 val out = java.io.ByteArrayOutputStream()
                 val buffer = ByteArray(8192)
@@ -512,11 +519,21 @@ class MainActivity : Activity() {
                 else -> "تحليل الوسائط: لم تُعرف صيغة صورة أو PDF أو فيديو أو صوت مدعومة."
             }
             val report = "نتيجة فحص الملف\nالاسم: $displayName\nالنوع المعلن: $mime\nالترويسة المقروءة: $kind\nالحجم: $fileSizeText\nSHA-256: $digest\n\n$formatAnalysis\n\n$summary\n\n$pythonAnalysis\n\nالنصيحة: $advice\n\nملاحظة: فحص محلي أولي لا يشغّل الملف ولا يرفعه. التحليل البنيوي والمؤشرات النصية لا تعادل محرك مضاد فيروسات، وقد تفوّت التهديدات أو تعطي تحذيرات غير دقيقة."
-            result.text = report
-            saveReport("ملف: $displayName", report)
+            runOnUiThread {
+                result.text = report
+                saveReport("ملف: $displayName", report)
+            }
         } catch (e: Exception) {
-            result.text = "تعذر إكمال الفحص: ${e.message ?: "خطأ غير معروف"}\n\nلم يتم تشغيل الملف."
+            val reason = e.message ?: "خطأ غير معروف"
+            val sizeText = if (selectedSize >= 0L) String.format(Locale.ROOT, "%,d بايت (%.2f MB)", selectedSize, selectedSize / (1024.0 * 1024.0)) else "غير متاح من مزود الملفات"
+            val rejectedReport = "نتيجة فحص الملف\nالاسم: $selectedName\nالنوع المعلن: $selectedMime\nالحجم: $sizeText\n\nحالة الفحص: لم يكتمل\nالسبب: $reason\n\nلم يتم تشغيل الملف أو رفعه. لم يُجرَ تحليل المحتوى أو حساب SHA-256 لأن الفحص توقف قبل اكتماله.\n\nملاحظة: هذا التقرير يوثق رفض الفحص أو تعذّر القراءة، ولا يحدد إن كان الملف آمناً أو ضاراً."
+            runOnUiThread {
+                result.text = rejectedReport
+                saveReport("ملف: $selectedName", rejectedReport)
+            }
         }
+        }, "phone-guardian-file-scan")
+        scanTask.start()
         actionButton("📋 نسخ تقرير الفحص") {
             val report = result.text.toString()
             if (!report.startsWith("نتيجة فحص الملف")) Toast.makeText(this,"لا يوجد تقرير لنسخه.",Toast.LENGTH_SHORT).show()
