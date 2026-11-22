@@ -970,7 +970,7 @@ class MainActivity : Activity() {
             }
 
             // Browser-interpretation traps: never normalize these silently.
-            if (raw.contains('\\\\')) {
+            if (raw.contains('\\')) {
                 findings.add(3 to "الرابط يحتوي شرطة مائلة عكسية قد تغيّر طريقة تفسير العنوان بين التطبيقات والمتصفحات.")
             }
             val authorityRaw = parsed.rawAuthority ?: ""
