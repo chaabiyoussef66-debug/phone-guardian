@@ -52,3 +52,10 @@ Build validation for v1.17.
 - Preserves literal plus signs while inspecting query values and reports nested encoding as an advisory indicator.
 - URL analysis remains local and heuristic; it does not establish site reputation or guarantee detection.
 - Manual validation matrix: normal HTTPS URL; mixed-script and confusable domains; invisible Unicode in host; single- and multiply-encoded external redirect targets; user-info (@); backslash authority tricks; malformed URL input.
+
+
+## v1.29 (development)
+- Improves extraction of redirect destination hostnames from absolute and protocol-relative query values after up to three percent-decoding layers.
+- Uses the URI raw authority as a fallback when URI.host is unavailable, and explicitly reports extracted external redirect hostnames without visiting them.
+- Redirect findings remain local heuristics and do not follow redirects or establish destination reputation.
+- Manual regression cases: `%2F%2Fevil.example/login`, `%252F%252Fevil.example%252Flogin`, `https%253A%252F%252Fevil.example%252Flogin`, same-host redirects, plus signs in query values, and normal HTTPS URLs.
