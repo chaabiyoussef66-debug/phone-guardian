@@ -1118,6 +1118,29 @@ class MainActivity : Activity() {
 
             // Inspect redirect values through up to three decoding layers without following them.
             // '+' is preserved because it is a valid literal in URL query values.
+            // Extract from rawAuthority as a fallback: URI.host can be null for IDNs
+            // and some authority forms even when the authority itself is parseable.
+            fun extractRedirectHost(value: String): String? {
+                val trimmed = value.trim()
+                val absolute = when {
+                    trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true) -> trimmed
+                    trimmed.startsWith("//") -> "https:$trimmed"
+                    else -> return null
+                }
+                val uri = runCatching { URI(absolute) }.getOrNull()
+                val rawAuthority = uri?.rawAuthority ?: absolute.substringAfter("://", "").substringBefore('/').substringBefore('?').substringBefore('#')
+                if (rawAuthority.isBlank()) return null
+                val withoutUserInfo = rawAuthority.substringAfterLast('@')
+                val extracted = when {
+                    withoutUserInfo.startsWith("[") && "]" in withoutUserInfo ->
+                        withoutUserInfo.substringAfter("[").substringBefore("]")
+                    withoutUserInfo.count { it == ':' } == 1 ->
+                        withoutUserInfo.substringBeforeLast(':')
+                    else -> withoutUserInfo
+                }
+                return extracted.lowercase(Locale.ROOT).trimEnd('.').takeIf { it.isNotBlank() }
+            }
+
             val redirectTargets = mutableSetOf<String>()
             var sawNestedEncoding = false
             (parsed.rawQuery ?: "").split("&").forEach { part ->
@@ -1132,20 +1155,12 @@ class MainActivity : Activity() {
                     }.getOrDefault(candidate)
                     if (decoded != candidate && depth > 0) sawNestedEncoding = true
                     candidate = decoded
-                    val trimmed = candidate.trim()
-                    val parseable = when {
-                        trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true) ->
-                            runCatching { URI(trimmed) }.getOrNull()
-                        trimmed.startsWith("//") ->
-                            runCatching { URI("https:$trimmed") }.getOrNull()
-                        else -> null
-                    }
-                    val targetHost = parseable?.host?.lowercase(Locale.ROOT)
-                    if (!targetHost.isNullOrBlank()) redirectTargets.add(targetHost)
+                    extractRedirectHost(candidate)?.let { redirectTargets.add(it) }
                 }
             }
-            if (redirectTargets.any { it != host }) {
-                findings.add(3 to "قيمة أحد معاملات التحويل، بعد فك ترميز متكرر محدود، تشير إلى مضيف آخر غير المضيف الظاهر؛ لم تتم زيارة الوجهة.")
+            val externalRedirectHosts = redirectTargets.filter { it != host }.sorted()
+            if (externalRedirectHosts.isNotEmpty()) {
+                findings.add(3 to "تم استخراج نطاق وجهة تحويل خارجية: ${externalRedirectHosts.joinToString(", ")}؛ لم تتم زيارة الوجهة.")
             }
             if (redirectTargets.size > 1) {
                 findings.add(1 to "الرابط يحتوي أكثر من وجهة تحويل محتملة؛ راجع العنوان كاملاً قبل المتابعة.")
