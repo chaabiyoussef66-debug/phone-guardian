@@ -933,6 +933,16 @@ class MainActivity : Activity() {
                     return@actionButton
                 }
             }
+            // Report browser-interpretation backslashes before java.net.URI rejects them.
+            // Never rewrite or normalize this ambiguous input into a different URL.
+            if (raw.contains('\\')) {
+                val warning = "الرابط يحتوي شرطة مائلة عكسية قد تغيّر طريقة تفسير العنوان بين التطبيقات والمتصفحات."
+                val report = "مستوى التنبيه: متوسط (3/10)\n\n• $warning\n• تعذّر تحليل الرابط بصيغته الحالية؛ لم يتم فتحه أو محاولة تصحيحه تلقائياً.\n\nالنصيحة: لا تفتح الرابط. أعد الحصول على العنوان من مصدر موثوق وتحقق من اسم النطاق حرفاً بحرف.\n\nملاحظة: هذا تقييم إرشادي لشكل الرابط فقط. لا يفتح الموقع، ولا يتبع التحويلات، ولا يستعلم عن قواعد بيانات السمعة؛ لذلك لا يثبت أن الموقع آمن ولا يضمن اكتشاف كل عمليات التصيد."
+                result.text = report
+                saveReport(raw, report)
+                return@actionButton
+            }
+
             val parsed = try { URI(normalized) } catch (_: Exception) { null }
             if (parsed == null || parsed.rawAuthority.isNullOrBlank()) {
                 result.text = "تعذّر قراءة الرابط. تأكد من كتابة اسم الموقع بشكل صحيح، مثل https://example.com"
@@ -969,10 +979,6 @@ class MainActivity : Activity() {
                 findings.add(3 to "نوع الاتصال غير معتاد لهذا الفاحص؛ لا تتابع إلا إذا كنت تعرف سبب استخدامه.")
             }
 
-            // Browser-interpretation traps: never normalize these silently.
-            if (raw.contains('\\')) {
-                findings.add(3 to "الرابط يحتوي شرطة مائلة عكسية قد تغيّر طريقة تفسير العنوان بين التطبيقات والمتصفحات.")
-            }
             val authorityRaw = parsed.rawAuthority ?: ""
             if (authorityRaw.contains('%')) {
                 findings.add(4 to "جزء اسم الموقع يحتوي ترميزاً مئوياً؛ قد يخفي أحرفاً أو يسبب اختلاف تفسير العنوان.")
