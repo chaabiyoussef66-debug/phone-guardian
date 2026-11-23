@@ -818,6 +818,13 @@ class MainActivity : Activity() {
 
     // Detect mixed writing systems and common Cyrillic/Greek lookalike letters.
     // This is a warning heuristic, not proof that a domain is malicious.
+    private fun containsInvisibleFormatCharacters(value: String): Boolean {
+        return value.any { ch ->
+            Character.getType(ch) == Character.FORMAT.toInt() ||
+                ch.code in 0x202A..0x202E || ch.code in 0x2066..0x2069
+        }
+    }
+
     private fun hasMixedScripts(label: String): Boolean {
         val scripts = label.filter { it.isLetter() }
             .map { Character.UnicodeScript.of(it.code) }
@@ -933,6 +940,25 @@ class MainActivity : Activity() {
                     return@actionButton
                 }
             }
+            // Detect invisible Unicode formatting controls in the authority before URI parsing.
+            // Decode at most three percent-encoding layers for inspection only; never rewrite the URL.
+            val rawAuthorityCandidate = Regex("(?i)^[A-Za-z][A-Za-z0-9+.-]*://([^/?#]*)")
+                .find(normalized)?.groupValues?.get(1).orEmpty()
+            var inspectedAuthority = rawAuthorityCandidate
+            repeat(3) {
+                val decoded = runCatching {
+                    URLDecoder.decode(inspectedAuthority.replace("+", "%2B"), "UTF-8")
+                }.getOrDefault(inspectedAuthority)
+                if (decoded == inspectedAuthority) return@repeat
+                inspectedAuthority = decoded
+            }
+            if (containsInvisibleFormatCharacters(inspectedAuthority)) {
+                val report = "مستوى التنبيه: متوسط (4/10)\\n\\n• اسم الموقع يحتوي محارف Unicode خفية أو محارف تنسيق قد تغيّر عرضه أو تفسيره.\\n• تم إيقاف التحليل قبل تفسير اسم المضيف؛ لم يتم فتح الرابط أو تعديله.\\n\\nالنصيحة: لا تفتح الرابط. اطلب العنوان من مصدر موثوق واستخدم اسم النطاق الرسمي المكتوب بوضوح.\\n\\nملاحظة: هذا فحص محلي إرشادي ولا يثبت أن الموقع ضار أو آمن."
+                result.text = report
+                saveReport(raw, report)
+                return@actionButton
+            }
+
             // Report browser-interpretation backslashes before java.net.URI rejects them.
             // Never rewrite or normalize this ambiguous input into a different URL.
             if (raw.contains('\\')) {
@@ -1090,25 +1116,42 @@ class MainActivity : Activity() {
                 findings.add(1 to "الرابط يحتوي معامل تحويل إلى وجهة أخرى؛ تأكد من الموقع الذي سيُفتح قبل المتابعة.")
             }
 
-            // Inspect redirect parameter values without following or contacting them.
-            val redirectTargets = (parsed.rawQuery ?: "").split("&").mapNotNull { part ->
+            // Inspect redirect values through up to three decoding layers without following them.
+            // '+' is preserved because it is a valid literal in URL query values.
+            val redirectTargets = mutableSetOf<String>()
+            var sawNestedEncoding = false
+            (parsed.rawQuery ?: "").split("&").forEach { part ->
                 val key = runCatching {
                     URLDecoder.decode(part.substringBefore("="), "UTF-8").lowercase(Locale.ROOT)
                 }.getOrDefault("")
-                if (key !in redirectKeys || !part.contains("=")) return@mapNotNull null
-                val value = runCatching {
-                    URLDecoder.decode(part.substringAfter("="), "UTF-8")
-                }.getOrDefault(part.substringAfter("="))
-                val candidate = value.trim()
-                if (candidate.startsWith("http://", true) || candidate.startsWith("https://", true)) {
-                    runCatching { URI(candidate).host?.lowercase(Locale.ROOT) }.getOrNull()
-                } else null
-            }.filterNotNull().distinct()
+                if (key !in redirectKeys || !part.contains("=")) return@forEach
+                var candidate = part.substringAfter("=")
+                repeat(3) { depth ->
+                    val decoded = runCatching {
+                        URLDecoder.decode(candidate.replace("+", "%2B"), "UTF-8")
+                    }.getOrDefault(candidate)
+                    if (decoded != candidate && depth > 0) sawNestedEncoding = true
+                    candidate = decoded
+                    val trimmed = candidate.trim()
+                    val parseable = when {
+                        trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true) ->
+                            runCatching { URI(trimmed) }.getOrNull()
+                        trimmed.startsWith("//") ->
+                            runCatching { URI("https:$trimmed") }.getOrNull()
+                        else -> null
+                    }
+                    val targetHost = parseable?.host?.lowercase(Locale.ROOT)
+                    if (!targetHost.isNullOrBlank()) redirectTargets.add(targetHost)
+                }
+            }
             if (redirectTargets.any { it != host }) {
-                findings.add(3 to "قيمة أحد معاملات التحويل تشير إلى مضيف آخر غير المضيف الظاهر؛ لا يمكن معرفة الوجهة النهائية دون فحص تحويل آمن.")
+                findings.add(3 to "قيمة أحد معاملات التحويل، بعد فك ترميز متكرر محدود، تشير إلى مضيف آخر غير المضيف الظاهر؛ لم تتم زيارة الوجهة.")
             }
             if (redirectTargets.size > 1) {
                 findings.add(1 to "الرابط يحتوي أكثر من وجهة تحويل محتملة؛ راجع العنوان كاملاً قبل المتابعة.")
+            }
+            if (sawNestedEncoding) {
+                findings.add(1 to "قيمة تحويل تحتوي أكثر من طبقة ترميز؛ قد تُخفي الوجهة المقصودة عند معالجتها.")
             }
             if (Regex("(?i)%25(?:2f|3a|40|2e)").containsMatchIn(raw)) {
                 findings.add(2 to "الرابط يحتوي ترميزاً مئوياً مزدوجاً قد يخفي فواصل أو رموزاً مهمة عند فك الترميز.")
