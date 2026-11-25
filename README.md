@@ -61,6 +61,10 @@ Build validation for v1.17.
 - Manual regression cases: `%2F%2Fevil.example/login`, `%252F%252Fevil.example%252Flogin`, `https%253A%252F%252Fevil.example%252Flogin`, same-host redirects, plus signs in query values, and normal HTTPS URLs.
 
 ## v1.30 (development)
-- Starts the next development line from the verified v1.29 baseline; v1.29 remains unchanged.
-- Version code 31 and version name 1.30.
-- New feature scope and regression tests are pending review before implementation.
+- Deepens offline URL inspection for deceptive brand-containing hostname labels, including brand names combined with extra words.
+- Expands known shortener recognition using a local allowlist only; shortened destinations are never resolved or visited.
+- Inspects redirect parameters through up to five percent-decoding layers and extracts HTTP(S)/protocol-relative URLs embedded in wrapped text or JSON-like values, without following them.
+- Warns when non-empty credential-like values (password, token, API key, session, OTP, and related keys) are embedded in URL query parameters; avoid sharing such URLs.
+- All findings are local heuristics. No DNS lookup, website request, redirect following, or external reputation lookup is performed.
+- Manual regression matrix: ordinary HTTPS URL; existing v1.29 external/same-host/multiple redirect cases; nested redirect encoded up to five layers; JSON/text-wrapped external URL; deceptive brand labels such as `paypal-secure.example`; known shorteners; URL query values named `token` or `password`; ordinary non-sensitive query parameters.
+- A shortener match only means the hostname is on the local list; it does not reveal or verify the final destination.
