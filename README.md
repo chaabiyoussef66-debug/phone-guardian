@@ -59,3 +59,8 @@ Build validation for v1.17.
 - Uses the URI raw authority as a fallback when URI.host is unavailable, and explicitly reports extracted external redirect hostnames without visiting them.
 - Redirect findings remain local heuristics and do not follow redirects or establish destination reputation.
 - Manual regression cases: `%2F%2Fevil.example/login`, `%252F%252Fevil.example%252Flogin`, `https%253A%252F%252Fevil.example%252Flogin`, same-host redirects, plus signs in query values, and normal HTTPS URLs.
+
+## v1.30 (development)
+- Starts the next development line from the verified v1.29 baseline; v1.29 remains unchanged.
+- Version code 31 and version name 1.30.
+- New feature scope and regression tests are pending review before implementation.
