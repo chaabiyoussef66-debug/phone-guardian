@@ -1152,7 +1152,7 @@ class MainActivity : Activity() {
                 findings.add(2 to "الرابط يبدو أنه يحمل قيمة حساسة داخل query (${exposedKeys.joinToString(", ")}). لا تشارك الرابط؛ قد تبقى هذه القيم في السجل أو الرسائل.")
             }
 
-            // Inspect redirect values through up to three decoding layers without following them.
+            // Inspect redirect values through up to five decoding layers without following them.
             // '+' is preserved because it is a valid literal in URL query values.
             // Extract from rawAuthority as a fallback: URI.host can be null for IDNs
             // and some authority forms even when the authority itself is parseable.
@@ -1194,7 +1194,7 @@ class MainActivity : Activity() {
                     candidate = decoded
                     extractRedirectHost(candidate)?.let { redirectTargets.add(it) }
                     // Some redirectors wrap destinations in JSON/text instead of a bare URL.
-                    Regex("""(?i)(?:https?://|//)[^\\s"'<>\\]+""")
+                    Regex("""(?i)(?:https?://|//)[^\s"'<>\\]+""")
                         .findAll(candidate)
                         .take(8)
                         .forEach { match ->
