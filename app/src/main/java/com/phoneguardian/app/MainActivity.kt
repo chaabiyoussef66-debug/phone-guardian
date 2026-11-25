@@ -1177,37 +1177,9 @@ class MainActivity : Activity() {
                 return extracted.lowercase(Locale.ROOT).trimEnd('.').takeIf { it.isNotBlank() }
             }
 
-            val redirectTargets = mutableSetOf<String>()
-            var sawNestedEncoding = false
-            (parsed.rawQuery ?: "").split("&").forEach { part ->
-                if (!part.contains("=")) return@forEach
-                val key = runCatching {
-                    URLDecoder.decode(part.substringBefore("="), "UTF-8").lowercase(Locale.ROOT)
-                }.getOrDefault("")
-                val isRedirectParameter = key in redirectKeys
-                var candidate = part.substringAfter("=")
-                // Inspect redirect parameters and other wrapped query values (for example JSON data).
-                // Decoding is local only; no URL is opened or contacted.
-                repeat(5) { depth ->
-                    val decoded = runCatching {
-                        URLDecoder.decode(candidate.replace("+", "%2B"), "UTF-8")
-                    }.getOrDefault(candidate)
-                    if (decoded != candidate && depth > 0) sawNestedEncoding = true
-                    candidate = decoded
-                    if (isRedirectParameter) {
-                        extractRedirectHost(candidate)?.let { redirectTargets.add(it) }
-                    }
-                    // URLs embedded in JSON/text query values are inspected regardless of parameter name.
-                    Regex("""(?i)(?:https?://|//)[^\s"'<>\\]+""")
-                        .findAll(candidate)
-                        .take(8)
-                        .forEach { match ->
-                            extractRedirectHost(match.value.trimEnd('.', ',', ';', ')', ']'))?.let {
-                                redirectTargets.add(it)
-                            }
-                        }
-                }
-            }
+            val queryInspection = LinkQueryInspector.inspect(parsed.rawQuery.orEmpty(), redirectKeys)
+            val redirectTargets = queryInspection.hosts
+            val sawNestedEncoding = queryInspection.hasNestedRedirectEncoding
             val externalRedirectHosts = redirectTargets.filter { it != host }.sorted()
             if (externalRedirectHosts.isNotEmpty()) {
                 findings.add(3 to "تم استخراج نطاق وجهة تحويل خارجية: ${externalRedirectHosts.joinToString(", ")}؛ لم تتم زيارة الوجهة.")
