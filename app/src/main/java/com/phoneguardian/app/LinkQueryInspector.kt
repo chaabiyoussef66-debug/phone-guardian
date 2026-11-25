@@ -14,7 +14,7 @@ internal object LinkQueryInspector {
     )
 
     private val embeddedUrlPattern =
-        Regex("""(?i)(?:https?://|//)[^\\s"'<>\\\\]+""")
+        Regex("""(?i)(?:https?://|//)[^\s"'<>\\]+""")
 
     fun inspect(rawQuery: String, redirectKeys: Set<String>): Result {
         val hosts = linkedSetOf<String>()
