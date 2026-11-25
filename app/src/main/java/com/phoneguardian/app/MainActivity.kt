@@ -1070,7 +1070,12 @@ class MainActivity : Activity() {
             }
 
             if (host.count { it == '.' } >= 4) findings.add(1 to "اسم النطاق يحتوي على مستويات فرعية كثيرة؛ تحقق من اسم الموقع الأساسي.")
-            val shorteners = setOf("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "rb.gy", "rebrand.ly", "lnkd.in")
+            val shorteners = setOf(
+                "bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "rb.gy",
+                "rebrand.ly", "lnkd.in", "ow.ly", "buff.ly", "shorturl.at",
+                "tiny.cc", "s.id", "soo.gd", "bl.ink", "v.gd", "trib.al",
+                "forms.gle", "bit.do", "clck.ru", "t.ly"
+            )
             if (host in shorteners) findings.add(2 to "هذا رابط مختصر يخفي الوجهة النهائية؛ لا تفتحه إذا لم تكن تثق بالمرسل.")
 
             // Local heuristics: brand-like subdomains and redirect parameters.
@@ -1096,6 +1101,18 @@ class MainActivity : Activity() {
                 findings.add(3 to "اسم النطاق يشبه في الكتابة علامة معروفة (${lookalikeBrands.joinToString(", ")}) مع اختلاف حرف تقريباً؛ تحقق من العنوان الرسمي.")
             }
 
+            // Detect brand names embedded in deceptive labels, not only exact labels or one-edit typos.
+            val deceptiveBrandLabels = hostLabels.filter { label ->
+                protectedBrandWords.any { brand ->
+                    label != brand && label.length >= brand.length + 2 &&
+                        (label.startsWith(brand) || label.endsWith(brand) ||
+                            label.contains("$brand-") || label.contains("-$brand"))
+                }
+            }
+            if (deceptiveBrandLabels.isNotEmpty()) {
+                findings.add(3 to "أحد أجزاء اسم الموقع يضم اسم علامة معروفة مع كلمات إضافية (${deceptiveBrandLabels.distinct().joinToString(", ")}). قد يُستعمل ذلك للإيهام بالانتماء إلى العلامة؛ تحقق من النطاق الأساسي.")
+            }
+
             if (host.contains("--") || host.startsWith("-") || host.endsWith("-")) {
                 findings.add(1 to "اسم النطاق يحتوي شرطات غير معتادة؛ تحقق من تهجئته.")
             }
@@ -1114,6 +1131,25 @@ class MainActivity : Activity() {
             val redirectKeys = setOf("redirect", "redirect_url", "return", "returnurl", "next", "continue", "destination", "dest", "target", "url")
             if (queryKeys.any { it in redirectKeys }) {
                 findings.add(1 to "الرابط يحتوي معامل تحويل إلى وجهة أخرى؛ تأكد من الموقع الذي سيُفتح قبل المتابعة.")
+            }
+
+            // Warn when secrets are placed in the URL itself; URLs may be retained in
+            // browser history, screenshots, analytics, and copied messages.
+            val sensitiveQueryKeys = setOf(
+                "password", "passwd", "pwd", "token", "access_token",
+                "refresh_token", "api_key", "apikey", "secret", "session",
+                "sessionid", "auth", "authorization", "otp", "code"
+            )
+            val exposedKeys = (parsed.rawQuery ?: "").split("&").mapNotNull { part ->
+                val key = runCatching {
+                    URLDecoder.decode(part.substringBefore("="), "UTF-8")
+                        .lowercase(Locale.ROOT)
+                }.getOrDefault("").trim()
+                key.takeIf { it in sensitiveQueryKeys && part.contains("=") &&
+                    part.substringAfter("=", "").isNotBlank() }
+            }.distinct()
+            if (exposedKeys.isNotEmpty()) {
+                findings.add(2 to "الرابط يبدو أنه يحمل قيمة حساسة داخل query (${exposedKeys.joinToString(", ")}). لا تشارك الرابط؛ قد تبقى هذه القيم في السجل أو الرسائل.")
             }
 
             // Inspect redirect values through up to three decoding layers without following them.
@@ -1149,13 +1185,23 @@ class MainActivity : Activity() {
                 }.getOrDefault("")
                 if (key !in redirectKeys || !part.contains("=")) return@forEach
                 var candidate = part.substringAfter("=")
-                repeat(3) { depth ->
+                // Inspect up to five layers. Each pass is local string decoding only.
+                repeat(5) { depth ->
                     val decoded = runCatching {
                         URLDecoder.decode(candidate.replace("+", "%2B"), "UTF-8")
                     }.getOrDefault(candidate)
                     if (decoded != candidate && depth > 0) sawNestedEncoding = true
                     candidate = decoded
                     extractRedirectHost(candidate)?.let { redirectTargets.add(it) }
+                    // Some redirectors wrap destinations in JSON/text instead of a bare URL.
+                    Regex("""(?i)(?:https?://|//)[^\\s"'<>\\]+""")
+                        .findAll(candidate)
+                        .take(8)
+                        .forEach { match ->
+                            extractRedirectHost(match.value.trimEnd('.', ',', ';', ')', ']'))?.let {
+                                redirectTargets.add(it)
+                            }
+                        }
                 }
             }
             val externalRedirectHosts = redirectTargets.filter { it != host }.sorted()
