@@ -1180,20 +1180,24 @@ class MainActivity : Activity() {
             val redirectTargets = mutableSetOf<String>()
             var sawNestedEncoding = false
             (parsed.rawQuery ?: "").split("&").forEach { part ->
+                if (!part.contains("=")) return@forEach
                 val key = runCatching {
                     URLDecoder.decode(part.substringBefore("="), "UTF-8").lowercase(Locale.ROOT)
                 }.getOrDefault("")
-                if (key !in redirectKeys || !part.contains("=")) return@forEach
+                val isRedirectParameter = key in redirectKeys
                 var candidate = part.substringAfter("=")
-                // Inspect up to five layers. Each pass is local string decoding only.
+                // Inspect redirect parameters and other wrapped query values (for example JSON data).
+                // Decoding is local only; no URL is opened or contacted.
                 repeat(5) { depth ->
                     val decoded = runCatching {
                         URLDecoder.decode(candidate.replace("+", "%2B"), "UTF-8")
                     }.getOrDefault(candidate)
                     if (decoded != candidate && depth > 0) sawNestedEncoding = true
                     candidate = decoded
-                    extractRedirectHost(candidate)?.let { redirectTargets.add(it) }
-                    // Some redirectors wrap destinations in JSON/text instead of a bare URL.
+                    if (isRedirectParameter) {
+                        extractRedirectHost(candidate)?.let { redirectTargets.add(it) }
+                    }
+                    // URLs embedded in JSON/text query values are inspected regardless of parameter name.
                     Regex("""(?i)(?:https?://|//)[^\s"'<>\\]+""")
                         .findAll(candidate)
                         .take(8)
